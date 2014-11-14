@@ -842,6 +842,7 @@ func (devices *DeviceSet) deactivateDevice(info *DevInfo) error {
 	// by watching the value of Info.OpenCount for the device
 	if err := devices.waitClose(info); err != nil {
 		log.Errorf("Warning: error waiting for device %s to close: %s", info.Hash, err)
+		return err
 	}
 
 	devinfo, err := devicemapper.GetInfo(info.Name())
