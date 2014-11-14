@@ -878,45 +878,8 @@ func (devices *DeviceSet) removeDeviceAndWait(devname string) error {
 		time.Sleep(10 * time.Millisecond)
 		devices.Lock()
 	}
-	if err != nil {
-		return err
-	}
 
-	if err := devices.waitRemove(devname); err != nil {
-		return err
-	}
-	return nil
-}
-
-// waitRemove blocks until either:
-// a) the device registered at <device_set_prefix>-<hash> is removed,
-// or b) the 10 second timeout expires.
-func (devices *DeviceSet) waitRemove(devname string) error {
-	log.Debugf("[deviceset %s] waitRemove(%s)", devices.devicePrefix, devname)
-	defer log.Debugf("[deviceset %s] waitRemove(%s) END", devices.devicePrefix, devname)
-	i := 0
-	for ; i < 1000; i++ {
-		devinfo, err := devicemapper.GetInfo(devname)
-		if err != nil {
-			// If there is an error we assume the device doesn't exist.
-			// The error might actually be something else, but we can't differentiate.
-			return nil
-		}
-		if i%100 == 0 {
-			log.Debugf("Waiting for removal of %s: exists=%d", devname, devinfo.Exists)
-		}
-		if devinfo.Exists == 0 {
-			break
-		}
-
-		devices.Unlock()
-		time.Sleep(10 * time.Millisecond)
-		devices.Lock()
-	}
-	if i == 1000 {
-		return fmt.Errorf("Timeout while waiting for device %s to be removed", devname)
-	}
-	return nil
+	return err
 }
 
 // waitClose blocks until either:
