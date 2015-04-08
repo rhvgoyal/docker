@@ -90,29 +90,30 @@ const (
 )
 
 var (
-	DmGetLibraryVersion    = dmGetLibraryVersionFct
-	DmGetNextTarget        = dmGetNextTargetFct
-	DmLogInitVerbose       = dmLogInitVerboseFct
-	DmSetDevDir            = dmSetDevDirFct
-	DmTaskAddTarget        = dmTaskAddTargetFct
-	DmTaskCreate           = dmTaskCreateFct
-	DmTaskDestroy          = dmTaskDestroyFct
-	DmTaskGetDeps          = dmTaskGetDepsFct
-	DmTaskGetInfo          = dmTaskGetInfoFct
-	DmTaskGetDriverVersion = dmTaskGetDriverVersionFct
-	DmTaskRun              = dmTaskRunFct
-	DmTaskSetAddNode       = dmTaskSetAddNodeFct
-	DmTaskSetCookie        = dmTaskSetCookieFct
-	DmTaskSetMessage       = dmTaskSetMessageFct
-	DmTaskSetName          = dmTaskSetNameFct
-	DmTaskSetRo            = dmTaskSetRoFct
-	DmTaskSetSector        = dmTaskSetSectorFct
-	DmUdevWait             = dmUdevWaitFct
-	DmUdevSetSyncSupport   = dmUdevSetSyncSupportFct
-	DmUdevGetSyncSupport   = dmUdevGetSyncSupportFct
-	DmCookieSupported      = dmCookieSupportedFct
-	LogWithErrnoInit       = logWithErrnoInitFct
-	DmTaskDeferredRemove   = dmTaskDeferredRemoveFct
+	DmGetLibraryVersion       = dmGetLibraryVersionFct
+	DmGetNextTarget           = dmGetNextTargetFct
+	DmLogInitVerbose          = dmLogInitVerboseFct
+	DmSetDevDir               = dmSetDevDirFct
+	DmTaskAddTarget           = dmTaskAddTargetFct
+	DmTaskCreate              = dmTaskCreateFct
+	DmTaskDestroy             = dmTaskDestroyFct
+	DmTaskGetDeps             = dmTaskGetDepsFct
+	DmTaskGetInfo             = dmTaskGetInfoFct
+	DmTaskGetDriverVersion    = dmTaskGetDriverVersionFct
+	DmTaskRun                 = dmTaskRunFct
+	DmTaskSetAddNode          = dmTaskSetAddNodeFct
+	DmTaskSetCookie           = dmTaskSetCookieFct
+	DmTaskSetMessage          = dmTaskSetMessageFct
+	DmTaskSetName             = dmTaskSetNameFct
+	DmTaskSetRo               = dmTaskSetRoFct
+	DmTaskSetSector           = dmTaskSetSectorFct
+	DmUdevWait                = dmUdevWaitFct
+	DmUdevSetSyncSupport      = dmUdevSetSyncSupportFct
+	DmUdevGetSyncSupport      = dmUdevGetSyncSupportFct
+	DmCookieSupported         = dmCookieSupportedFct
+	LogWithErrnoInit          = logWithErrnoInitFct
+	DmTaskDeferredRemove      = dmTaskDeferredRemoveFct
+	DmTaskGetInfoWithDeferred = dmTaskGetInfoWithDeferredFct
 )
 
 func free(p *C.char) {
@@ -206,6 +207,24 @@ func dmTaskGetInfoFct(task *CDmTask, info *Info) int {
 		info.Minor = uint32(Cinfo.minor)
 		info.ReadOnly = int(Cinfo.read_only)
 		info.TargetCount = int32(Cinfo.target_count)
+	}()
+	return int(C.dm_task_get_info((*C.struct_dm_task)(task), &Cinfo))
+}
+
+func dmTaskGetInfoWithDeferredFct(task *CDmTask, info *Info) int {
+	Cinfo := C.struct_dm_info{}
+	defer func() {
+		info.Exists = int(Cinfo.exists)
+		info.Suspended = int(Cinfo.suspended)
+		info.LiveTable = int(Cinfo.live_table)
+		info.InactiveTable = int(Cinfo.inactive_table)
+		info.OpenCount = int32(Cinfo.open_count)
+		info.EventNr = uint32(Cinfo.event_nr)
+		info.Major = uint32(Cinfo.major)
+		info.Minor = uint32(Cinfo.minor)
+		info.ReadOnly = int(Cinfo.read_only)
+		info.TargetCount = int32(Cinfo.target_count)
+		info.DeferredRemove = int(Cinfo.deferred_remove)
 	}()
 	return int(C.dm_task_get_info((*C.struct_dm_task)(task), &Cinfo))
 }
