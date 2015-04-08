@@ -1346,12 +1346,20 @@ func (devices *DeviceSet) deactivateDevice(info *DevInfo) error {
 	if err != nil {
 		return err
 	}
-	if devinfo.Exists != 0 {
+
+	if devinfo.Exists == 0 {
+		return nil
+	}
+
+	if devices.deferredRemove {
+		if err := devicemapper.RemoveDeviceDeferred(info.Name()); err != nil {
+			return err
+		}
+	} else {
 		if err := devices.removeDevice(info.Name()); err != nil {
 			return err
 		}
 	}
-
 	return nil
 }
 

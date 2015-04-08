@@ -112,6 +112,7 @@ var (
 	DmUdevGetSyncSupport   = dmUdevGetSyncSupportFct
 	DmCookieSupported      = dmCookieSupportedFct
 	LogWithErrnoInit       = logWithErrnoInitFct
+	DmTaskDeferredRemove   = dmTaskDeferredRemoveFct
 )
 
 func free(p *C.char) {
@@ -273,4 +274,8 @@ func dmGetLibraryVersionFct(version *string) int {
 		*version = C.GoString(buffer)
 	}()
 	return int(C.dm_get_library_version(buffer, 128))
+}
+
+func dmTaskDeferredRemoveFct(task *CDmTask) int {
+	return int(C.dm_task_deferred_remove((*C.struct_dm_task)(task)))
 }
