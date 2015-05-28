@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/engine"
 	"github.com/docker/docker/runconfig"
 )
@@ -54,7 +55,6 @@ func (daemon *Daemon) ContainerInspect(job *engine.Job) engine.Status {
 	out.SetJson("Volumes", container.Volumes)
 	out.SetJson("VolumesRW", container.VolumesRW)
 	out.SetJson("AppArmorProfile", container.AppArmorProfile)
-
 	out.SetList("ExecIDs", container.GetExecIDs())
 
 	if children, err := daemon.Children(container.Name); err == nil {
@@ -74,6 +74,16 @@ func (daemon *Daemon) ContainerInspect(job *engine.Job) engine.Status {
 	out.SetJson("HostConfig", container.hostConfig)
 
 	container.hostConfig.Links = nil
+
+	graphDriver := types.GraphDriverData{}
+	graphDriver.Name = container.Driver
+	graphDriverData, err := daemon.driver.GetMetadata(container.ID)
+	if err != nil {
+		return job.Error(err)
+	}
+	graphDriver.Data = graphDriverData
+	out.SetJson("GraphDriver", graphDriver)
+
 	if _, err := out.WriteTo(job.Stdout); err != nil {
 		return job.Error(err)
 	}

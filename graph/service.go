@@ -5,6 +5,7 @@ import (
 	"io"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/engine"
 	"github.com/docker/docker/image"
 )
@@ -149,6 +150,16 @@ func (s *TagStore) CmdLookup(job *engine.Job) engine.Status {
 		out.Set("Os", image.OS)
 		out.SetInt64("Size", image.Size)
 		out.SetInt64("VirtualSize", image.GetParentsSize(0)+image.Size)
+
+		graphDriver := types.GraphDriverData{}
+		graphDriver.Name = s.graph.Driver().String()
+		graphDriverData, err := s.graph.Driver().GetMetadata(image.ID)
+		if err != nil {
+			return job.Error(err)
+		}
+		graphDriver.Data = graphDriverData
+		out.SetJson("GraphDriver", graphDriver)
+
 		if _, err = out.WriteTo(job.Stdout); err != nil {
 			return job.Error(err)
 		}

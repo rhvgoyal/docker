@@ -9,3 +9,8 @@ type ContainerCreateResponse struct {
 	// Warnings are any warnings encountered during the creation of the container.
 	Warnings []string `json:"Warnings"`
 }
+
+type GraphDriverData struct {
+	Name string
+	Data interface{}
+}

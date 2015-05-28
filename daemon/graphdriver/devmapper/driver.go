@@ -90,6 +90,14 @@ func (d *Driver) Status() [][2]string {
 	return status
 }
 
+func (d *Driver) GetMetadata(id string) (interface{}, error) {
+	m, err := d.DeviceSet.ExportDeviceMetadata(id)
+	if err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 func (d *Driver) Cleanup() error {
 	err := d.DeviceSet.Shutdown()
 
