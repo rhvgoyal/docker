@@ -1490,17 +1490,39 @@ func (devices *DeviceSet) deleteTransaction(info *devInfo) error {
 	return nil
 }
 
+// Issue discard only if device open count is zero.
+func (devices *DeviceSet) issueDiscard(info *devInfo) error {
+	logrus.Debugf("devmapper: issueDiscard(device: %s). START", info.Hash)
+	defer logrus.Debugf("devmapper: issueDiscard(device: %s). END", info.Hash)
+	// This is a workaround for the kernel not discarding block so
+	// on the thin pool when we remove a thinp device, so we do it
+	// manually
+	if err := devices.activateDeviceIfNeeded(info); err != nil {
+		return err
+	}
+
+	// If device open count is not zero, device is in use and skip
+	// issuing discards.
+	devinfo, err := devicemapper.GetInfo(info.Name())
+	if err != nil {
+		return err
+	}
+
+	if devinfo.OpenCount != 0 {
+		logrus.Debugf("devmapper: Device: %s is in use. OpenCount=%d. Not issuing discrads.", info.Hash, devinfo.OpenCount)
+		return nil
+	}
+
+	if err := devicemapper.BlockDeviceDiscard(info.DevName()); err != nil {
+		logrus.Debugf("Error discarding block on device: %s (ignoring)", err)
+	}
+	return nil
+}
+
 // Should be called with devices.Lock() held.
 func (devices *DeviceSet) deleteDevice(info *devInfo) error {
 	if devices.doBlkDiscard {
-		// This is a workaround for the kernel not discarding block so
-		// on the thin pool when we remove a thinp device, so we do it
-		// manually
-		if err := devices.activateDeviceIfNeeded(info); err == nil {
-			if err := devicemapper.BlockDeviceDiscard(info.DevName()); err != nil {
-				logrus.Debugf("Error discarding block on device: %s (ignoring)", err)
-			}
-		}
+		devices.issueDiscard(info)
 	}
 
 	// Try to deactivate deivce in case it is active.
