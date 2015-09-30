@@ -107,10 +107,12 @@ type DeviceSet struct {
 	thinPoolDevice        string
 	transaction           `json:"-"`
 	overrideUdevSyncCheck bool
-	deferredRemove        bool   // use deferred removal
-	deferredDelete        bool   // use deferred deletion
-	BaseDeviceUUID        string //save UUID of base device
-	nrDeletedDevices      uint   //number of deleted devices
+	deferredRemove        bool      // use deferred removal
+	deferredDelete        bool      // use deferred deletion
+	BaseDeviceUUID        string    //save UUID of base device
+	nrDeletedDevices      uint      //number of deleted devices
+	deletionWorkerRunning bool      // true if worker thread is already running
+	deletionWorkerChan    chan bool // Use to communicate with thread.
 }
 
 // DiskUsage contains information about disk usage and is used when reporting Status of a device.
@@ -639,6 +641,12 @@ func (devices *DeviceSet) initMetaData() error {
 
 	if err := devices.cleanupDeletedDevices(); err != nil {
 		return err
+	}
+
+	// If there are deleted devices left, schedule worker to cleanup
+	// devices later.
+	if devices.nrDeletedDevices > 0 {
+		devices.scheduleDefDeletion()
 	}
 
 	return nil
@@ -1609,6 +1617,7 @@ func (devices *DeviceSet) markForDeferredDeletion(info *devInfo) error {
 	}
 
 	devices.nrDeletedDevices++
+	devices.scheduleDefDeletion()
 	return nil
 }
 
@@ -1728,6 +1737,86 @@ func (devices *DeviceSet) DeleteDevice(hash string, syncDelete bool) error {
 	}
 
 	return devices.deleteDevice(info, syncDelete)
+}
+
+// Either sleep for 30 seconds or wait for command from parent.
+// It returns true if one should continue to loop. Returns false if
+// parent sent a message on channel indicating stop.
+func (devices *DeviceSet) waitSleepCleanupThread() bool {
+	// Create a timer of 30 seconds.
+	timer := time.NewTimer(time.Second * 30)
+
+	select {
+	case <-timer.C:
+		return true
+	case <-devices.deletionWorkerChan:
+		timer.Stop()
+	}
+	return false
+}
+
+// Don't call this function directly. Should be scheduled with a call to
+// scheduleDefDeletion()
+func (devices *DeviceSet) cleanupDeletedDevicesThread() {
+	devices.Lock()
+	for {
+		logrus.Debugf("devmapper: Calling cleanupDeletedDevices().\n")
+		err := devices.cleanupDeletedDevices()
+		if err != nil {
+			logrus.Errorf("devmapper: cleanupDeletedDevices() failed.")
+			break
+		}
+
+		if devices.nrDeletedDevices <= 0 {
+			break
+		}
+
+		devices.Unlock()
+		continueProcessing := devices.waitSleepCleanupThread()
+		devices.Lock()
+		if !continueProcessing {
+			break
+		}
+	}
+	devices.deletionWorkerRunning = false
+	logrus.Debugf("devmapper: Exiting cleanupDeletedDevicesThread.\n")
+	devices.Unlock()
+}
+
+// This should be called with devices.Lock() held.
+func (devices *DeviceSet) scheduleDefDeletion() {
+	if devices.deletionWorkerRunning {
+		return
+	}
+
+	logrus.Debugf("devmapper: Kickstarting deferred deletion worker.")
+	devices.deletionWorkerRunning = true
+	go devices.cleanupDeletedDevicesThread()
+}
+
+// Cancel the deferred deletion worker if it was running. It sends a message
+// to worker thread to stop and then waits for worker to exit.
+func (devices *DeviceSet) cancelDefDeletion() {
+	devices.Lock()
+	if devices.deletionWorkerRunning == false {
+		devices.Unlock()
+		return
+	}
+	devices.deletionWorkerChan <- true
+	devices.Unlock()
+
+	// Wait in a loop for thread to stop.
+	for {
+		devices.Lock()
+		if devices.deletionWorkerRunning == false {
+			devices.Unlock()
+			return
+		}
+		devices.Unlock()
+		// Sleep for 10 miliseconds and check again
+		time.Sleep(time.Millisecond * 10)
+	}
+
 }
 
 func (devices *DeviceSet) deactivatePool() error {
@@ -1890,6 +1979,9 @@ func (devices *DeviceSet) Shutdown() error {
 		devices.Unlock()
 		info.lock.Unlock()
 	}
+
+	// Stop device deletion worker thread.
+	devices.cancelDefDeletion()
 
 	devices.Lock()
 	if devices.thinPoolDevice == "" {
@@ -2203,6 +2295,7 @@ func NewDeviceSet(root string, doInit bool, options []string) (*DeviceSet, error
 		doBlkDiscard:          true,
 		thinpBlockSize:        defaultThinpBlockSize,
 		deviceIDMap:           make([]byte, deviceIDMapSz),
+		deletionWorkerChan:    make(chan bool),
 	}
 
 	foundBlkDiscard := false
