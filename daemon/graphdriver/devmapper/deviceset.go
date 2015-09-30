@@ -1664,6 +1664,9 @@ func (devices *DeviceSet) Shutdown() error {
 	var devs []*devInfo
 
 	devices.Lock()
+	// Save DeviceSet Metadata first
+	devices.saveDeviceSetMetaData()
+
 	for _, info := range devices.Devices {
 		devs = append(devs, info)
 	}
@@ -1705,8 +1708,6 @@ func (devices *DeviceSet) Shutdown() error {
 			logrus.Debugf("Shutdown deactivate pool , error: %s", err)
 		}
 	}
-
-	devices.saveDeviceSetMetaData()
 	devices.Unlock()
 
 	return nil
