@@ -1469,6 +1469,27 @@ func (devices *DeviceSet) AddDevice(hash, baseHash string) error {
 	return nil
 }
 
+// Should be caled with devices.Lock() held.
+func (devices *DeviceSet) deleteTransaction(info *devInfo) error {
+	if err := devices.openTransaction(info.Hash, info.DeviceID); err != nil {
+		logrus.Debugf("Error opening transaction hash = %s deviceId = %d", "", info.DeviceID)
+		return err
+	}
+
+	defer devices.closeTransaction()
+
+	if err := devicemapper.DeleteDevice(devices.getPoolDevName(), info.DeviceID); err != nil {
+		logrus.Debugf("Error deleting device: %s", err)
+		return err
+	}
+
+	if err := devices.unregisterDevice(info.DeviceID, info.Hash); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // Should be called with devices.Lock() held.
 func (devices *DeviceSet) deleteDevice(info *devInfo) error {
 	if devices.doBlkDiscard {
@@ -1488,21 +1509,7 @@ func (devices *DeviceSet) deleteDevice(info *devInfo) error {
 		return err
 	}
 
-	if err := devices.openTransaction(info.Hash, info.DeviceID); err != nil {
-		logrus.Debugf("Error opening transaction hash = %s deviceID = %d", "", info.DeviceID)
-		return err
-	}
-
-	if err := devicemapper.DeleteDevice(devices.getPoolDevName(), info.DeviceID); err != nil {
-		logrus.Debugf("Error deleting device: %s", err)
-		return err
-	}
-
-	if err := devices.unregisterDevice(info.DeviceID, info.Hash); err != nil {
-		return err
-	}
-
-	if err := devices.closeTransaction(); err != nil {
+	if err := devices.deleteTransaction(info); err != nil {
 		return err
 	}
 
