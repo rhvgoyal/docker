@@ -410,11 +410,6 @@ func (devices *DeviceSet) deviceFileWalkFunction(path string, finfo os.FileInfo)
 		return fmt.Errorf("Error loading device metadata file %s", hash)
 	}
 
-	if dinfo.DeviceID > maxDeviceID {
-		logrus.Errorf("Ignoring Invalid DeviceID=%d", dinfo.DeviceID)
-		return nil
-	}
-
 	devices.markDeviceIDUsed(dinfo.DeviceID)
 	logrus.Debugf("Added deviceID=%d to DeviceIDMap", dinfo.DeviceID)
 	return nil
@@ -716,6 +711,11 @@ func (devices *DeviceSet) loadMetadata(hash string) *devInfo {
 	}
 
 	if err := json.Unmarshal(jsonData, &info); err != nil {
+		return nil
+	}
+
+	if info.DeviceID > maxDeviceID {
+		logrus.Errorf("Ignoring Invalid DeviceId=%d", info.DeviceID)
 		return nil
 	}
 
