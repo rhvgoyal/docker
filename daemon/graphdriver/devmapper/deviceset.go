@@ -110,6 +110,7 @@ type DeviceSet struct {
 	deferredRemove        bool   // use deferred removal
 	deferredDelete        bool   // use deferred deletion
 	BaseDeviceUUID        string //save UUID of base device
+	nrDeletedDevices      uint   //number of deleted devices
 }
 
 // DiskUsage contains information about disk usage and is used when reporting Status of a device.
@@ -143,8 +144,9 @@ type Status struct {
 	// UdevSyncSupported is true if sync is supported.
 	UdevSyncSupported bool
 	// DeferredRemoveEnabled is true then the device is not unmounted.
-	DeferredRemoveEnabled bool
-	DeferredDeleteEnabled bool
+	DeferredRemoveEnabled      bool
+	DeferredDeleteEnabled      bool
+	DeferredDeletedDeviceCount uint
 }
 
 // Structure used to export image/container metadata in docker inspect.
@@ -601,6 +603,14 @@ func (devices *DeviceSet) cleanupDeletedDevices() error {
 	return nil
 }
 
+func (devices *DeviceSet) countDeletedDevices() {
+	for _, info := range devices.Devices {
+		if info.Deleted {
+			devices.nrDeletedDevices++
+		}
+	}
+}
+
 func (devices *DeviceSet) initMetaData() error {
 	devices.Lock()
 	defer devices.Unlock()
@@ -621,6 +631,7 @@ func (devices *DeviceSet) initMetaData() error {
 	}
 
 	devices.constructDeviceIDMap()
+	devices.countDeletedDevices()
 
 	if err := devices.processPendingTransaction(); err != nil {
 		return err
@@ -1596,6 +1607,8 @@ func (devices *DeviceSet) markForDeferredDeletion(info *devInfo) error {
 		info.Deleted = false
 		return err
 	}
+
+	devices.nrDeletedDevices++
 	return nil
 }
 
@@ -1622,6 +1635,12 @@ func (devices *DeviceSet) deleteTransaction(info *devInfo, syncDelete bool) erro
 	if err == nil {
 		if err := devices.unregisterDevice(info.DeviceID, info.Hash); err != nil {
 			return err
+		}
+		// If device was already in deferred delete state that means
+		// deletion was being tried again later. Reduce the deleted
+		// device count.
+		if info.Deleted {
+			devices.nrDeletedDevices--
 		}
 	} else {
 		if err := devices.markForDeferredDeletion(info); err != nil {
@@ -2119,6 +2138,7 @@ func (devices *DeviceSet) Status() *Status {
 	status.UdevSyncSupported = devicemapper.UdevSyncSupported()
 	status.DeferredRemoveEnabled = devices.deferredRemove
 	status.DeferredDeleteEnabled = devices.deferredDelete
+	status.DeferredDeletedDeviceCount = devices.nrDeletedDevices
 
 	totalSizeInSectors, _, dataUsed, dataTotal, metadataUsed, metadataTotal, err := devices.poolStatus()
 	if err == nil {
