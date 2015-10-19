@@ -5,6 +5,7 @@ package devmapper
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/docker/docker/daemon/graphdriver"
 	"github.com/docker/docker/daemon/graphdriver/graphtest"
@@ -78,4 +79,35 @@ func testChangeLoopBackSize(t *testing.T, delta, expectDataSize, expectMetaDataS
 	if err := driver.Cleanup(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// Make sure devices.Lock() has been release upon return from cleanupDeletedDevices() function
+func TestDevmapperLockReleasedDeviceDeletion(t *testing.T) {
+	driver := graphtest.GetDriver(t, "devicemapper").(*graphtest.Driver).Driver.(*graphdriver.NaiveDiffDriver).ProtoDriver.(*Driver)
+	defer graphtest.PutDriver(t)
+
+	// Call cleanupDeletedDevices() and after the call take and release
+	// devices.Lock(). If lock has not been released, this will hang.
+	driver.DeviceSet.cleanupDeletedDevices()
+
+	//Wait for 5 seconds for goroutine to finish.
+	timer := time.NewTimer(time.Second * 5)
+	doneChan := make(chan bool)
+
+	go testTakeReleaseLock(driver.DeviceSet, doneChan)
+
+	select {
+	case <-timer.C:
+		fmt.Printf("Vivek: Timer Expired.")
+		t.Fatalf("Could not acquire devices lock after call to cleanupDeletedDevices()")
+	case <-doneChan:
+		timer.Stop()
+		fmt.Printf("Vivek: Got a message on done Channel")
+	}
+}
+
+func testTakeReleaseLock(devices *DeviceSet, doneChan chan<- bool) {
+	devices.Lock()
+	defer devices.Unlock()
+	doneChan <- true
 }
