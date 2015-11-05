@@ -547,10 +547,7 @@ func (devices *DeviceSet) createFilesystem(info *devInfo) error {
 	case "xfs":
 		err = exec.Command("mkfs.xfs", args...).Run()
 	case "ext4":
-		err = exec.Command("mkfs.ext4", append([]string{"-E", "nodiscard,lazy_itable_init=0,lazy_journal_init=0"}, args...)...).Run()
-		if err != nil {
-			err = exec.Command("mkfs.ext4", append([]string{"-E", "nodiscard,lazy_itable_init=0"}, args...)...).Run()
-		}
+		err = exec.Command("mkfs.ext4", append([]string{"-E", "nodiscard"}, args...)...).Run()
 		if err != nil {
 			return err
 		}
