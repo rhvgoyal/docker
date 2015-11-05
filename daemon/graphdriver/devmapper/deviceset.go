@@ -1478,6 +1478,11 @@ func (devices *DeviceSet) initDevmapper(doInit bool) error {
 		return err
 	}
 
+	// Now devices.root dir is created. Determine the default fs.
+	if devices.filesystem == "" {
+		devices.filesystem = determineDefaultFS(devices.root)
+	}
+
 	// Set the device prefix from the device id and inode of the docker root dir
 
 	st, err := os.Stat(devices.root)
@@ -2256,6 +2261,33 @@ func (devices *DeviceSet) exportDeviceMetadata(hash string) (*deviceMetadata, er
 	return metadata, nil
 }
 
+// Check fs type of filesystem root is residing on. If it is either ext4 or
+// xfs use it.
+func determineDefaultFS(root string) string {
+	defaultFS := "ext4"
+	out, err := exec.Command("df", "--output=fstype", root).CombinedOutput()
+	if err != nil {
+		// Failed to determine fs type of host. return defaultFS
+		logrus.Debugf("devmapper: Running df failed. err=%v. out=%s", err, string(out))
+		return defaultFS
+	}
+
+	outsplit := strings.Split(string(out), "\n")
+	if len(outsplit) < 2 {
+		logrus.Debugf("devmapper: Length of df output split slice is less than 2. outsplit=%v", outsplit)
+		// Failed to determine fs type of host. return defaultFS
+		return defaultFS
+	}
+
+	logrus.Debugf("devmapper: %s is residing on filesystem type %s", root, outsplit[1])
+
+	if outsplit[1] == "xfs" {
+		return "xfs"
+	}
+
+	return defaultFS
+}
+
 // NewDeviceSet creates the device set based on the options provided.
 func NewDeviceSet(root string, doInit bool, options []string, uidMaps, gidMaps []idtools.IDMap) (*DeviceSet, error) {
 	devicemapper.SetDevDir("/dev")
@@ -2267,7 +2299,6 @@ func NewDeviceSet(root string, doInit bool, options []string, uidMaps, gidMaps [
 		metaDataLoopbackSize:  defaultMetaDataLoopbackSize,
 		baseFsSize:            defaultBaseFsSize,
 		overrideUdevSyncCheck: defaultUdevSyncOverride,
-		filesystem:            "ext4",
 		doBlkDiscard:          true,
 		thinpBlockSize:        defaultThinpBlockSize,
 		deviceIDMap:           make([]byte, deviceIDMapSz),
