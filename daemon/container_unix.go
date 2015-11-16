@@ -1470,7 +1470,7 @@ func (daemon *Daemon) mountVolumes(container *Container) error {
 			return err
 		}
 
-		opts := "rbind,ro"
+		opts := "bind,ro"
 		if m.Writable {
 			opts = "rbind,rw"
 		}
