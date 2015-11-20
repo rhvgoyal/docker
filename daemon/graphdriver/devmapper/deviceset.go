@@ -799,7 +799,7 @@ func (devices *DeviceSet) createRegisterDevice(hash string) (*devInfo, error) {
 	return info, nil
 }
 
-func (devices *DeviceSet) createRegisterSnapDevice(hash string, baseInfo *devInfo) error {
+func (devices *DeviceSet) createRegisterSnapDevice(hash string, baseInfo *devInfo, extendSize bool) error {
 	deviceID, err := devices.getNextFreeDeviceID()
 	if err != nil {
 		return err
@@ -834,7 +834,11 @@ func (devices *DeviceSet) createRegisterSnapDevice(hash string, baseInfo *devInf
 		break
 	}
 
-	if _, err := devices.registerDevice(deviceID, hash, baseInfo.Size, devices.OpenTransactionID); err != nil {
+	size := baseInfo.Size
+	if extendSize {
+		size = 214748364800
+	}
+	if _, err := devices.registerDevice(deviceID, hash, size, devices.OpenTransactionID); err != nil {
 		devicemapper.DeleteDevice(devices.getPoolDevName(), deviceID)
 		devices.markDeviceIDFree(deviceID)
 		logrus.Debugf("Error registering device: %s", err)
@@ -1729,10 +1733,60 @@ func (devices *DeviceSet) AddDevice(hash, baseHash string) error {
 		return fmt.Errorf("device %s already exists. Deleted=%v", hash, info.Deleted)
 	}
 
-	if err := devices.createRegisterSnapDevice(hash, baseInfo); err != nil {
+	extendSize := false
+	if strings.HasSuffix(hash, "-init") {
+		extendSize = true
+	}
+
+	if err := devices.createRegisterSnapDevice(hash, baseInfo, extendSize); err != nil {
 		return err
 	}
 
+	if !strings.HasSuffix(hash, "-init") {
+		return nil
+	}
+
+	// This is -init device being created. Grow it to 200G. Assumes
+	// that /tmp/mnt is present.
+
+	logrus.Debugf("TEST: Will try to grow fs.")
+
+	info, err := devices.lookupDevice(hash)
+	if info == nil {
+		return fmt.Errorf("Failed to lookup device %s:%v", hash, err)
+	}
+
+	info.lock.Lock()
+	defer info.lock.Unlock()
+
+	if err := devices.activateDeviceIfNeeded(info, false); err != nil {
+		return fmt.Errorf("Error activating devmapper device for '%s': %s", hash, err)
+	}
+
+	defer devices.deactivateDevice(info)
+
+	fstype, err := ProbeFsType(info.DevName())
+	if err != nil {
+		return fmt.Errorf("Error probing fs type of filesystem.", err)
+	}
+
+	logrus.Debugf("TEST: fstype is %s", fstype)
+	options := ""
+	if fstype == "xfs" {
+		// XFS needs nouuid or it can't mount filesystems with the same fs
+		options = joinMountOptions(options, "nouuid")
+	}
+	options = joinMountOptions(options, devices.mountOptions)
+
+	if err := mount.Mount(info.DevName(), "/tmp/mnt", fstype, options); err != nil {
+		return fmt.Errorf("Error mounting '%s' on '%s': %s", info.DevName(), "/tmp/mnt", err)
+	}
+
+	defer syscall.Unmount("/tmp/mnt", syscall.MNT_DETACH)
+
+	if out, err := exec.Command("resize2fs", info.DevName()).CombinedOutput(); err != nil {
+		logrus.Debugf("TEST: Failed to grow rootfs:%v:%s", err, string(out))
+	}
 	return nil
 }
 
