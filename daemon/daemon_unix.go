@@ -407,6 +407,9 @@ func verifyPlatformContainerSettings(daemon *Daemon, hostConfig *containertypes.
 		warnings = append(warnings, "IPv4 forwarding is disabled. Networking will not work.")
 		logrus.Warnf("IPv4 forwarding is disabled. Networking will not work")
 	}
+	if !hostConfig.ReadonlyRootfs && daemon.GraphDriverName() == "hardlinks" {
+		return warnings, fmt.Errorf("Usage of --read-only option is mandatory as graph driver being used is hardlinks.")
+	}
 	// check for various conflicting options with user namespaces
 	if daemon.configStore.RemappedRoot != "" {
 		if hostConfig.Privileged {

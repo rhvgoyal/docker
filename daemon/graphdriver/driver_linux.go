@@ -53,6 +53,7 @@ var (
 		"devicemapper",
 		"overlay",
 		"vfs",
+		"hardlinks",
 	}
 
 	// FsNames maps filesystem id to name of the filesystem.
