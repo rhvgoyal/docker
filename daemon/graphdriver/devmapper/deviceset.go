@@ -158,6 +158,8 @@ type Status struct {
 	SectorSize uint64
 	// UdevSyncSupported is true if sync is supported.
 	UdevSyncSupported bool
+	// UdevWaitImmediateSupported is true if devmapper package supports it
+	UdevWaitImmediateSupported bool
 	// DeferredRemoveEnabled is true then the device is not unmounted.
 	DeferredRemoveEnabled bool
 	// True if deferred deletion is enabled. This is different from
@@ -518,6 +520,55 @@ func (devices *DeviceSet) registerDevice(id int, hash string, size uint64, trans
 	return info, nil
 }
 
+// Do udev wait. If wait is not complete, drop the lock, sleep for a while,
+// acquire lock again and retry. This should be called with devices.Lock held
+// and it returns with devices.Lock held.
+func (devices *DeviceSet) udevWaitUnlock(cookie *uint) error {
+	sleepwait := 1 * time.Millisecond
+	waitstep := 5 * time.Millisecond
+
+	for {
+		err, ready := devicemapper.UdevWaitImmediate(cookie)
+		if err != nil {
+			return err
+		}
+
+		if ready == 1 {
+			// Wait is complete.
+			return nil
+		}
+
+		// Sleep for a while and retry.
+		devices.Unlock()
+		time.Sleep(sleepwait)
+		sleepwait += waitstep
+		if sleepwait > 100*time.Millisecond {
+			sleepwait = 100
+		}
+		devices.Lock()
+	}
+	return nil
+}
+
+// Activate Device and do udev wait in a loop with mutex unlocked while
+// sleeping. This should be called with devices.Lock held. This function
+// can drop the lock for a while but will return with devices.Lock held.
+func (devices *DeviceSet) activateDeviceWaitUnlock(poolName string, deviceName string, deviceID int, size uint64) error {
+	var cookie uint = 0
+
+	err, cookieset := devicemapper.ActivateDeviceNoWait(&cookie, poolName, deviceName, deviceID, size)
+	if err != nil {
+		// If cookie was set in task, call UdevWait() even in case of
+		// error to cleanup associated semaphore. Otherwise we will
+		// behind a semaphore and soon run out of semaphores.
+		if cookieset {
+			devicemapper.UdevWait(&cookie)
+		}
+		return err
+	}
+	return devices.udevWaitUnlock(&cookie)
+}
+
 func (devices *DeviceSet) activateDeviceIfNeeded(info *devInfo, ignoreDeleted bool) error {
 	logrus.Debugf("devmapper: activateDeviceIfNeeded(%v)", info.Hash)
 
@@ -535,7 +586,11 @@ func (devices *DeviceSet) activateDeviceIfNeeded(info *devInfo, ignoreDeleted bo
 		return nil
 	}
 
-	return devicemapper.ActivateDevice(devices.getPoolDevName(), info.Name(), info.DeviceID, info.Size)
+	if !devicemapper.UdevWaitImmediateSupported() {
+		return devicemapper.ActivateDevice(devices.getPoolDevName(), info.Name(), info.DeviceID, info.Size)
+	} else {
+		return devices.activateDeviceWaitUnlock(devices.getPoolDevName(), info.Name(), info.DeviceID, info.Size)
+	}
 }
 
 // Return true only if kernel supports xfs and mkfs.xfs is available
@@ -754,9 +809,6 @@ func (devices *DeviceSet) getNextFreeDeviceID() (int, error) {
 }
 
 func (devices *DeviceSet) createRegisterDevice(hash string) (*devInfo, error) {
-	devices.Lock()
-	defer devices.Unlock()
-
 	deviceID, err := devices.getNextFreeDeviceID()
 	if err != nil {
 		return nil, err
@@ -903,10 +955,8 @@ func (devices *DeviceSet) getBaseDeviceFS() string {
 	return devices.BaseDeviceFilesystem
 }
 
+// Should be called with devices.Lock() held.
 func (devices *DeviceSet) verifyBaseDeviceUUIDFS(baseInfo *devInfo) error {
-	devices.Lock()
-	defer devices.Unlock()
-
 	if err := devices.activateDeviceIfNeeded(baseInfo, false); err != nil {
 		return err
 	}
@@ -946,10 +996,8 @@ func (devices *DeviceSet) saveBaseDeviceFilesystem(fs string) error {
 	return devices.saveDeviceSetMetaData()
 }
 
+// Should be called with devices.Lock() held. Device activation needs it.
 func (devices *DeviceSet) saveBaseDeviceUUID(baseInfo *devInfo) error {
-	devices.Lock()
-	defer devices.Unlock()
-
 	if err := devices.activateDeviceIfNeeded(baseInfo, false); err != nil {
 		return err
 	}
@@ -965,6 +1013,9 @@ func (devices *DeviceSet) saveBaseDeviceUUID(baseInfo *devInfo) error {
 }
 
 func (devices *DeviceSet) createBaseImage() error {
+	devices.Lock()
+	defer devices.Unlock()
+
 	logrus.Debugf("devmapper: Initializing base device-mapper thin volume")
 
 	// Create initial device
@@ -1042,6 +1093,10 @@ func (devices *DeviceSet) checkThinPool() error {
 // Base image is initialized properly. Either save UUID for first time (for
 // upgrade case or verify UUID.
 func (devices *DeviceSet) setupVerifyBaseImageUUIDFS(baseInfo *devInfo) error {
+	// saveBaseDeviceUUID expets to be called with devices lock
+	devices.Lock()
+	defer devices.Unlock()
+
 	// If BaseDeviceUUID is nil (upgrade case), save it and return success.
 	if devices.BaseDeviceUUID == "" {
 		if err := devices.saveBaseDeviceUUID(baseInfo); err != nil {
@@ -2002,8 +2057,10 @@ func (devices *DeviceSet) deactivateDevice(info *devInfo) error {
 			return err
 		}
 	} else {
-		if err := devices.removeDevice(info.Name()); err != nil {
-			return err
+		if !devicemapper.UdevWaitImmediateSupported() {
+			return devices.removeDevice(info.Name())
+		} else {
+			return devices.removeDeviceWaitUnlock(info.Name())
 		}
 	}
 	return nil
@@ -2027,6 +2084,51 @@ func (devices *DeviceSet) removeDevice(devname string) error {
 
 		// If we see EBUSY it may be a transient error,
 		// sleep a bit a retry a few times.
+		devices.Unlock()
+		time.Sleep(100 * time.Millisecond)
+		devices.Lock()
+	}
+
+	return err
+}
+
+// Issues the underlying dm remove operation.
+func (devices *DeviceSet) removeDeviceWaitUnlock(devname string) error {
+	var err error
+	var cookie uint
+	var cookieset bool
+
+	logrus.Debugf("devmapper: removeDeviceWaitUnlock START(%s)", devname)
+	defer logrus.Debugf("devmapper: removeDeviceWaitUnlock END(%s)", devname)
+
+	for i := 0; i < 200; i++ {
+		// Set cookie to 0. Otherwise if there is a stale valid cookie,
+		// due to previous try, then libdevmapper tries to find
+		// semaphore associated with it and errors out as there is
+		// none.
+		cookie = 0
+		err, cookieset = devicemapper.RemoveDeviceNoWait(&cookie, devname)
+		if err != nil {
+			// Make sure semaphore of cookie is released.
+			if cookieset {
+				if err2 := devicemapper.UdevWait(&cookie); err2 != nil {
+					return err2
+				}
+			}
+
+			// If device was busy, we will retry.
+			if err != devicemapper.ErrBusy {
+				return err
+			}
+		}
+
+		if err == nil {
+			return devices.udevWaitUnlock(&cookie)
+		}
+
+		// If we are here, that means device removal attempt failed
+		// as device was busy. It may be a transient error. Sleep
+		// a bit and retry.
 		devices.Unlock()
 		time.Sleep(100 * time.Millisecond)
 		devices.Lock()
@@ -2366,6 +2468,7 @@ func (devices *DeviceSet) Status() *Status {
 	status.MetadataFile = devices.MetadataDevicePath()
 	status.MetadataLoopback = devices.metadataLoopFile
 	status.UdevSyncSupported = devicemapper.UdevSyncSupported()
+	status.UdevWaitImmediateSupported = devicemapper.UdevWaitImmediateSupported()
 	status.DeferredRemoveEnabled = devices.deferredRemove
 	status.DeferredDeleteEnabled = devices.deferredDelete
 	status.DeferredDeletedDeviceCount = devices.nrDeletedDevices

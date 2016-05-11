@@ -62,6 +62,7 @@ var (
 	ErrNilCookie            = errors.New("cookie ptr can't be nil")
 	ErrGetBlockSize         = errors.New("Can't get block size")
 	ErrUdevWait             = errors.New("wait on udev cookie failed")
+	ErrUdevWaitImmediate    = errors.New("immediate wait on udev cookie failed")
 	ErrSetDevDir            = errors.New("dm_set_dev_dir failed")
 	ErrGetLibraryVersion    = errors.New("dm_get_library_version failed")
 	ErrCreateRemoveTask     = errors.New("Can't create task of type deviceRemove")
@@ -263,6 +264,27 @@ func UdevWait(cookie *uint) error {
 	return nil
 }
 
+// UdevWaitImmediate checks if wait associated with a cookie has completed.
+// If error occurs, there is no need to call back. Otherwise caller should
+// check status of integer returned. If it is set to 1, that means wait is
+// complete and there is no need to call back. Otherwise, wait is not complete
+// and caller should call back after a while and check again.
+func UdevWaitImmediate(cookie *uint) (error, int) {
+	res, ready := DmUdevWaitImmediate(*cookie)
+	if res != 1 {
+		logrus.Debugf("devicemapper: Failed to do immediate wait on udev cookie %d", *cookie)
+		return ErrUdevWaitImmediate, 0
+	}
+
+	if ready == 1 {
+		// Wait is complete. Device is ready. No need to call back.
+		return nil, 1
+	}
+
+	// Wait is not complete. Caller should call back later again.
+	return nil, 0
+}
+
 // LogInitVerbose is an interface to initialize the verbose logger for the device mapper library.
 func LogInitVerbose(level int) {
 	DmLogInitVerbose(level)
@@ -314,6 +336,12 @@ func UdevSetSyncSupport(enable bool) bool {
 	return UdevSyncSupported()
 }
 
+// UdevWaitImmediateSupported returns whether libdevmapper supports a non
+// blocking version of dm_udev_wait() or not.
+func UdevWaitImmediateSupported() bool {
+	return libraryUdevWaitImmediate
+}
+
 // CookieSupported returns whether the version of device-mapper supports the
 // use of cookie's in the tasks.
 // This is largely a lower level call that other functions use.
@@ -343,6 +371,35 @@ func RemoveDevice(name string) error {
 	}
 
 	return nil
+}
+
+// RemoveDeviceNoWait is a useful helper for cleaning up a device. Unlike
+// RemoveDevice, it does not do a udev wait and caller needs to do it if
+// need be. Caller needs to pass in a cookie.
+//
+// It also returns a boolean which indicates if cookie set operation succeeded
+// or not. If it succeeded, then caller needs to do a dm_udev_wait() even if
+// actual device removal operation failed to make sure associated semaphore is
+// cleaned up.
+func RemoveDeviceNoWait(cookie *uint, name string) (error, bool) {
+	task, err := TaskCreateNamed(deviceRemove, name)
+	if task == nil {
+		return err, false
+	}
+
+	if err := task.setCookie(cookie, 0); err != nil {
+		return fmt.Errorf("devicemapper: Can not set cookie: %s", err), false
+	}
+
+	dmSawBusy = false // reset before the task is run
+	if err = task.run(); err != nil {
+		if dmSawBusy {
+			return ErrBusy, true
+		}
+		return fmt.Errorf("devicemapper: Error running RemoveDevice %s", err), true
+	}
+
+	return nil, true
 }
 
 // RemoveDeviceDeferred is a useful helper for cleaning up a device, but deferred.
@@ -711,6 +768,17 @@ func ActivateDevice(poolName string, name string, deviceID int, size uint64) err
 	return activateDevice(poolName, name, deviceID, size, "")
 }
 
+// ActivateDeviceNoWait activates the device identified by the specified
+// poolName, name and deviceID with the specified size. It does not do
+// any udev wait and it is caller's responsibility to do so. It also expects
+// to be passed in a cookie which can be used for waiting later. It also
+// returns a boolean which indicates whether cookie got set or not. If cookie
+// got set, then one needs to wait on cookie anyway to cleanup semaphore
+// even in case of device activation error.
+func ActivateDeviceNoWait(cookie *uint, poolName string, name string, deviceID int, size uint64) (error, bool) {
+	return activateDeviceNoWait(cookie, poolName, name, deviceID, size)
+}
+
 // ActivateDeviceWithExternal activates the device identified by the specified
 // poolName, name and deviceID with the specified size.
 func ActivateDeviceWithExternal(poolName string, name string, deviceID int, size uint64, external string) error {
@@ -748,6 +816,32 @@ func activateDevice(poolName string, name string, deviceID int, size uint64, ext
 	}
 
 	return nil
+}
+
+func activateDeviceNoWait(cookie *uint, poolName string, name string, deviceID int, size uint64) (error, bool) {
+	task, err := TaskCreateNamed(deviceCreate, name)
+	if task == nil {
+		return err, false
+	}
+
+	var params string
+	params = fmt.Sprintf("%s %d", poolName, deviceID)
+	if err := task.addTarget(0, size/512, "thin", params); err != nil {
+		return fmt.Errorf("devicemapper: Can't add target %s", err), false
+	}
+	if err := task.setAddNode(addNodeOnCreate); err != nil {
+		return fmt.Errorf("devicemapper: Can't add node %s", err), false
+	}
+
+	if err := task.setCookie(cookie, 0); err != nil {
+		return fmt.Errorf("devicemapper: Can't set cookie %s", err), false
+	}
+
+	if err := task.run(); err != nil {
+		return fmt.Errorf("devicemapper: Error running deviceCreate (ActivateDevice) %s", err), true
+	}
+
+	return nil, true
 }
 
 // CreateSnapDevice creates a snapshot based on the device identified by the baseName and baseDeviceId,

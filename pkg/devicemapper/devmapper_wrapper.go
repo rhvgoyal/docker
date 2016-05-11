@@ -72,6 +72,7 @@ var (
 	DmTaskSetRo               = dmTaskSetRoFct
 	DmTaskSetSector           = dmTaskSetSectorFct
 	DmUdevWait                = dmUdevWaitFct
+	DmUdevWaitImmediate       = dmUdevWaitImmediateFct
 	DmUdevSetSyncSupport      = dmUdevSetSyncSupportFct
 	DmUdevGetSyncSupport      = dmUdevGetSyncSupportFct
 	DmCookieSupported         = dmCookieSupportedFct

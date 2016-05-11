@@ -129,6 +129,15 @@ if \
        DOCKER_BUILDTAGS+=' libdm_no_deferred_remove'
 fi
 
+# test whether "libdevmapper.h" is new enough to support udev_wait_immediate
+# functionality.
+if \
+	command -v gcc &> /dev/null \
+	&& ! ( echo -e  '#include <libdevmapper.h>\nint main() { dm_udev_wait_immediate(0, NULL); }'| gcc -xc - -o /dev/null -ldevmapper &> /dev/null ) \
+; then
+       DOCKER_BUILDTAGS+=' libdm_no_udev_wait_immediate'
+fi
+
 # Use these flags when compiling the tests and final binary
 
 IAMSTATIC='true'
