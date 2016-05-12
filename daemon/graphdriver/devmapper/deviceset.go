@@ -47,6 +47,7 @@ var (
 	driverDeferredRemovalSupport = false
 	enableDeferredRemoval        = false
 	enableDeferredDeletion       = false
+	enableUdevWaitImmediate      = false
 	userBaseSize                 = false
 )
 
@@ -116,6 +117,7 @@ type DeviceSet struct {
 	overrideUdevSyncCheck bool
 	deferredRemove        bool   // use deferred removal
 	deferredDelete        bool   // use deferred deletion
+	udevWaitImmediate     bool   // use udev wait immediate
 	BaseDeviceUUID        string // save UUID of base device
 	BaseDeviceFilesystem  string // save filesystem of base device
 	nrDeletedDevices      uint   // number of deleted devices
@@ -158,8 +160,9 @@ type Status struct {
 	SectorSize uint64
 	// UdevSyncSupported is true if sync is supported.
 	UdevSyncSupported bool
-	// UdevWaitImmediateSupported is true if devmapper package supports it
-	UdevWaitImmediateSupported bool
+	// UdevWaitImmediateEnabled is true if devmapper package supports it
+	// and user asked to enable it.
+	UdevWaitImmediateEnabled bool
 	// DeferredRemoveEnabled is true then the device is not unmounted.
 	DeferredRemoveEnabled bool
 	// True if deferred deletion is enabled. This is different from
@@ -586,7 +589,7 @@ func (devices *DeviceSet) activateDeviceIfNeeded(info *devInfo, ignoreDeleted bo
 		return nil
 	}
 
-	if !devicemapper.UdevWaitImmediateSupported() {
+	if !devices.udevWaitImmediate {
 		return devicemapper.ActivateDevice(devices.getPoolDevName(), info.Name(), info.DeviceID, info.Size)
 	} else {
 		return devices.activateDeviceWaitUnlock(devices.getPoolDevName(), info.Name(), info.DeviceID, info.Size)
@@ -1674,6 +1677,13 @@ func (devices *DeviceSet) initDevmapper(doInit bool) error {
 		devices.deferredDelete = true
 	}
 
+	if enableUdevWaitImmediate {
+		if !devicemapper.UdevWaitImmediateSupported() {
+			return fmt.Errorf("devmapper: Udev Wait Immediate can not be enabled as library does not support it.")
+		}
+		devices.udevWaitImmediate = true
+	}
+
 	// https://github.com/docker/docker/issues/4036
 	if supported := devicemapper.UdevSetSyncSupport(true); !supported {
 		logrus.Warn("devmapper: Udev sync is not supported. This will lead to unexpected behavior, data loss and errors. For more information, see https://docs.docker.com/reference/commandline/daemon/#daemon-storage-driver-option")
@@ -2057,7 +2067,7 @@ func (devices *DeviceSet) deactivateDevice(info *devInfo) error {
 			return err
 		}
 	} else {
-		if !devicemapper.UdevWaitImmediateSupported() {
+		if !devices.udevWaitImmediate {
 			return devices.removeDevice(info.Name())
 		} else {
 			return devices.removeDeviceWaitUnlock(info.Name())
@@ -2468,7 +2478,7 @@ func (devices *DeviceSet) Status() *Status {
 	status.MetadataFile = devices.MetadataDevicePath()
 	status.MetadataLoopback = devices.metadataLoopFile
 	status.UdevSyncSupported = devicemapper.UdevSyncSupported()
-	status.UdevWaitImmediateSupported = devicemapper.UdevWaitImmediateSupported()
+	status.UdevWaitImmediateEnabled = devices.udevWaitImmediate
 	status.DeferredRemoveEnabled = devices.deferredRemove
 	status.DeferredDeleteEnabled = devices.deferredDelete
 	status.DeferredDeletedDeviceCount = devices.nrDeletedDevices
@@ -2611,6 +2621,12 @@ func NewDeviceSet(root string, doInit bool, options []string, uidMaps, gidMaps [
 
 		case "dm.use_deferred_deletion":
 			enableDeferredDeletion, err = strconv.ParseBool(val)
+			if err != nil {
+				return nil, err
+			}
+
+		case "dm.use_udev_wait_immediate":
+			enableUdevWaitImmediate, err = strconv.ParseBool(val)
 			if err != nil {
 				return nil, err
 			}
