@@ -79,6 +79,15 @@ func (d *Driver) Status() [][2]string {
 		{"Deferred Removal Enabled", fmt.Sprintf("%v", s.DeferredRemoveEnabled)},
 		{"Deferred Deletion Enabled", fmt.Sprintf("%v", s.DeferredDeleteEnabled)},
 		{"Deferred Deleted Device Count", fmt.Sprintf("%v", s.DeferredDeletedDeviceCount)},
+		{"MountDevice time", fmt.Sprintf("%v", s.MountDeviceTime)},
+		{"UnmountDevice time", fmt.Sprintf("%v", s.UnmountDeviceTime)},
+		{"AddDevice time", fmt.Sprintf("%v", s.AddDeviceTime)},
+		{"DeleteDevice time", fmt.Sprintf("%v", s.DeleteDeviceTime)},
+		{"ActivateDevice time", fmt.Sprintf("%v", s.ActivateDeviceTime)},
+		{"DeactivateDevice time", fmt.Sprintf("%v", s.DeactivateDeviceTime)},
+		{"ActivateDeviceWaitUnlock time", fmt.Sprintf("%v", s.ActivateDeviceWaitUnlockTime)},
+		{"Max Concurrent Activation", fmt.Sprintf("%v", s.MaxConcurrentActivation)},
+		{"GetInfo time", fmt.Sprintf("%v", s.GetInfoTime)},
 	}
 	if len(s.DataLoopback) > 0 {
 		status = append(status, [2]string{"Data loop file", s.DataLoopback})

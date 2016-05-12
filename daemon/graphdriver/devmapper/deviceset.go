@@ -100,30 +100,40 @@ type DeviceSet struct {
 	deviceIDMap   []byte
 
 	// Options
-	dataLoopbackSize      int64
-	metaDataLoopbackSize  int64
-	baseFsSize            uint64
-	filesystem            string
-	mountOptions          string
-	mkfsArgs              []string
-	dataDevice            string // block or loop dev
-	dataLoopFile          string // loopback file, if used
-	metadataDevice        string // block or loop dev
-	metadataLoopFile      string // loopback file, if used
-	doBlkDiscard          bool
-	thinpBlockSize        uint32
-	thinPoolDevice        string
-	transaction           `json:"-"`
-	overrideUdevSyncCheck bool
-	deferredRemove        bool   // use deferred removal
-	deferredDelete        bool   // use deferred deletion
-	udevWaitImmediate     bool   // use udev wait immediate
-	BaseDeviceUUID        string // save UUID of base device
-	BaseDeviceFilesystem  string // save filesystem of base device
-	nrDeletedDevices      uint   // number of deleted devices
-	deletionWorkerTicker  *time.Ticker
-	uidMaps               []idtools.IDMap
-	gidMaps               []idtools.IDMap
+	dataLoopbackSize             int64
+	metaDataLoopbackSize         int64
+	baseFsSize                   uint64
+	filesystem                   string
+	mountOptions                 string
+	mkfsArgs                     []string
+	dataDevice                   string // block or loop dev
+	dataLoopFile                 string // loopback file, if used
+	metadataDevice               string // block or loop dev
+	metadataLoopFile             string // loopback file, if used
+	doBlkDiscard                 bool
+	thinpBlockSize               uint32
+	thinPoolDevice               string
+	transaction                  `json:"-"`
+	overrideUdevSyncCheck        bool
+	deferredRemove               bool   // use deferred removal
+	deferredDelete               bool   // use deferred deletion
+	udevWaitImmediate            bool   // use udev wait immediate
+	BaseDeviceUUID               string // save UUID of base device
+	BaseDeviceFilesystem         string // save filesystem of base device
+	nrDeletedDevices             uint   // number of deleted devices
+	deletionWorkerTicker         *time.Ticker
+	uidMaps                      []idtools.IDMap
+	gidMaps                      []idtools.IDMap
+	activationCount              uint
+	maxConcurrentActivation      uint
+	mountDeviceTime              time.Duration
+	unmountDeviceTime            time.Duration
+	addDeviceTime                time.Duration
+	deleteDeviceTime             time.Duration
+	activateDeviceWaitUnlockTime time.Duration
+	activateDeviceTime           time.Duration
+	deactivateDeviceTime         time.Duration
+	getInfoTime                  time.Duration
 }
 
 // DiskUsage contains information about disk usage and is used when reporting Status of a device.
@@ -170,8 +180,17 @@ type Status struct {
 	// deactivated. Thin device is still in thin pool and can be activated
 	// again. But "deletion" means that thin device will be deleted from
 	// thin pool and it can't be activated again.
-	DeferredDeleteEnabled      bool
-	DeferredDeletedDeviceCount uint
+	DeferredDeleteEnabled        bool
+	DeferredDeletedDeviceCount   uint
+	MountDeviceTime              time.Duration
+	UnmountDeviceTime            time.Duration
+	AddDeviceTime                time.Duration
+	DeleteDeviceTime             time.Duration
+	ActivateDeviceTime           time.Duration
+	ActivateDeviceWaitUnlockTime time.Duration
+	MaxConcurrentActivation      uint
+	GetInfoTime                  time.Duration
+	DeactivateDeviceTime         time.Duration
 }
 
 // Structure used to export image/container metadata in docker inspect.
@@ -558,6 +577,9 @@ func (devices *DeviceSet) udevWaitUnlock(cookie *uint) error {
 // can drop the lock for a while but will return with devices.Lock held.
 func (devices *DeviceSet) activateDeviceWaitUnlock(poolName string, deviceName string, deviceID int, size uint64) error {
 	var cookie uint = 0
+	defer timeTrack(time.Now(), &devices.activateDeviceWaitUnlockTime)
+	devices.enterActivation()
+	defer devices.exitActivation()
 
 	err, cookieset := devicemapper.ActivateDeviceNoWait(&cookie, poolName, deviceName, deviceID, size)
 	if err != nil {
@@ -570,6 +592,14 @@ func (devices *DeviceSet) activateDeviceWaitUnlock(poolName string, deviceName s
 		return err
 	}
 	return devices.udevWaitUnlock(&cookie)
+}
+
+func (devices *DeviceSet) activateDeviceTimeTrack(info *devInfo) error {
+	defer timeTrack(time.Now(), &devices.activateDeviceTime)
+	devices.enterActivation()
+	defer devices.exitActivation()
+
+	return devicemapper.ActivateDevice(devices.getPoolDevName(), info.Name(), info.DeviceID, info.Size)
 }
 
 func (devices *DeviceSet) activateDeviceIfNeeded(info *devInfo, ignoreDeleted bool) error {
@@ -590,7 +620,7 @@ func (devices *DeviceSet) activateDeviceIfNeeded(info *devInfo, ignoreDeleted bo
 	}
 
 	if !devices.udevWaitImmediate {
-		return devicemapper.ActivateDevice(devices.getPoolDevName(), info.Name(), info.DeviceID, info.Size)
+		return devices.activateDeviceTimeTrack(info)
 	} else {
 		return devices.activateDeviceWaitUnlock(devices.getPoolDevName(), info.Name(), info.DeviceID, info.Size)
 	}
@@ -1858,6 +1888,7 @@ func (devices *DeviceSet) initDevmapper(doInit bool) error {
 
 // AddDevice adds a device and registers in the hash.
 func (devices *DeviceSet) AddDevice(hash, baseHash string) error {
+	defer timeTrack(time.Now(), &devices.addDeviceTime)
 	logrus.Debugf("devmapper: AddDevice(hash=%s basehash=%s)", hash, baseHash)
 	defer logrus.Debugf("devmapper: AddDevice(hash=%s basehash=%s) END", hash, baseHash)
 
@@ -2002,6 +2033,7 @@ func (devices *DeviceSet) deleteDevice(info *devInfo, syncDelete bool) error {
 // removal. If one wants to override that and want DeleteDevice() to fail if
 // device was busy and could not be deleted, set syncDelete=true.
 func (devices *DeviceSet) DeleteDevice(hash string, syncDelete bool) error {
+	defer timeTrack(time.Now(), &devices.deleteDeviceTime)
 	logrus.Debugf("devmapper: DeleteDevice(hash=%v syncDelete=%v) START", hash, syncDelete)
 	defer logrus.Debugf("devmapper: DeleteDevice(hash=%v syncDelete=%v) END", hash, syncDelete)
 	info, err := devices.lookupDeviceWithLock(hash)
@@ -2049,11 +2081,16 @@ func (devices *DeviceSet) deactivatePool() error {
 	return nil
 }
 
+func (devices *DeviceSet) getInfoTimeTrack(info *devInfo) (*devicemapper.Info, error) {
+	timeTrack(time.Now(), &devices.getInfoTime)
+	return devicemapper.GetInfo(info.Name())
+}
+
 func (devices *DeviceSet) deactivateDevice(info *devInfo) error {
 	logrus.Debugf("devmapper: deactivateDevice(%s)", info.Hash)
 	defer logrus.Debugf("devmapper: deactivateDevice END(%s)", info.Hash)
 
-	devinfo, err := devicemapper.GetInfo(info.Name())
+	devinfo, err := devices.getInfoTimeTrack(info)
 	if err != nil {
 		return err
 	}
@@ -2061,6 +2098,8 @@ func (devices *DeviceSet) deactivateDevice(info *devInfo) error {
 	if devinfo.Exists == 0 {
 		return nil
 	}
+
+	timeTrack(time.Now(), &devices.deactivateDeviceTime)
 
 	if devices.deferredRemove {
 		if err := devicemapper.RemoveDeviceDeferred(info.Name()); err != nil {
@@ -2256,8 +2295,26 @@ func (devices *DeviceSet) Shutdown() error {
 	return nil
 }
 
+func timeTrack(start time.Time, update *time.Duration) {
+	elapsed := time.Since(start)
+	*update = *update + elapsed
+}
+
+func (devices *DeviceSet) enterActivation() {
+	devices.activationCount++
+	if devices.activationCount > devices.maxConcurrentActivation {
+		devices.maxConcurrentActivation = devices.activationCount
+	}
+}
+
+func (devices *DeviceSet) exitActivation() {
+	devices.activationCount--
+}
+
 // MountDevice mounts the device if not already mounted.
 func (devices *DeviceSet) MountDevice(hash, path, mountLabel string) error {
+
+	defer timeTrack(time.Now(), &devices.mountDeviceTime)
 	info, err := devices.lookupDeviceWithLock(hash)
 	if err != nil {
 		return err
@@ -2326,6 +2383,8 @@ func (devices *DeviceSet) UnmountDevice(hash, mountPath string) error {
 
 	devices.Lock()
 	defer devices.Unlock()
+
+	defer timeTrack(time.Now(), &devices.unmountDeviceTime)
 
 	// If there are running containers when daemon crashes, during daemon
 	// restarting, it will kill running containers and will finally call
@@ -2482,6 +2541,15 @@ func (devices *DeviceSet) Status() *Status {
 	status.DeferredRemoveEnabled = devices.deferredRemove
 	status.DeferredDeleteEnabled = devices.deferredDelete
 	status.DeferredDeletedDeviceCount = devices.nrDeletedDevices
+	status.MountDeviceTime = devices.mountDeviceTime
+	status.UnmountDeviceTime = devices.unmountDeviceTime
+	status.AddDeviceTime = devices.addDeviceTime
+	status.DeleteDeviceTime = devices.deleteDeviceTime
+	status.ActivateDeviceTime = devices.activateDeviceTime
+	status.DeactivateDeviceTime = devices.deactivateDeviceTime
+	status.ActivateDeviceWaitUnlockTime = devices.activateDeviceWaitUnlockTime
+	status.MaxConcurrentActivation = devices.maxConcurrentActivation
+	status.GetInfoTime = devices.getInfoTime
 	status.BaseDeviceSize = devices.getBaseDeviceSize()
 	status.BaseDeviceFS = devices.getBaseDeviceFS()
 
