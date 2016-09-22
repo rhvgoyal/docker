@@ -53,6 +53,10 @@ func setupInitLayer(initLayer string, rootUID, rootGID int) error {
 	return nil
 }
 
+func (daemon *Daemon) getLayerInit() func(string) error {
+	daemon.setupInitLayer
+}
+
 func checkKernel() error {
 	// solaris can rely upon checkSystem() below, we don't skew kernel versions
 	return nil
