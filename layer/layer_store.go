@@ -254,9 +254,7 @@ func (ls *layerStore) registerWithDescriptor(ts io.Reader, parent ChainID, descr
 		// Release parent chain if error
 		defer func() {
 			if err != nil {
-				ls.layerL.Lock()
-				ls.releaseLayer(p)
-				ls.layerL.Unlock()
+				ls.releaseLayerLock(p)
 			}
 		}()
 		if p.depth() >= maxLayerDepth {
@@ -378,6 +376,12 @@ func (ls *layerStore) deleteLayer(layer *roLayer, metadata *Metadata) error {
 	return nil
 }
 
+func (ls *layerStore) releaseLayerLock(l *roLayer) ([]Metadata, error) {
+	ls.layerL.Lock()
+	defer ls.layerL.Unlock()
+	return ls.releaseLayer(l)
+}
+
 func (ls *layerStore) releaseLayer(l *roLayer) ([]Metadata, error) {
 	depth := 0
 	removed := []Metadata{}
@@ -450,9 +454,7 @@ func (ls *layerStore) CreateRWLayer(name string, parent ChainID, mountLabel stri
 		// Release parent chain if error
 		defer func() {
 			if err != nil {
-				ls.layerL.Lock()
-				ls.releaseLayer(p)
-				ls.layerL.Unlock()
+				ls.releaseLayerLock(p)
 			}
 		}()
 	}
@@ -545,10 +547,8 @@ func (ls *layerStore) ReleaseRWLayer(l RWLayer) ([]Metadata, error) {
 
 	delete(ls.mounts, m.Name())
 
-	ls.layerL.Lock()
-	defer ls.layerL.Unlock()
 	if m.parent != nil {
-		return ls.releaseLayer(m.parent)
+		return ls.releaseLayerLock(m.parent)
 	}
 
 	return []Metadata{}, nil
