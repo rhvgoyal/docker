@@ -7,12 +7,13 @@ import (
 )
 
 type mountedLayer struct {
-	name       string
-	mountID    string
-	initID     string
-	parent     *roLayer
-	path       string
-	layerStore *layerStore
+	name        string
+	mountID     string
+	initID      string
+	initRWLayer RWLayer
+	parent      *roLayer
+	path        string
+	layerStore  *layerStore
 
 	references map[RWLayer]*referencedRWLayer
 }
