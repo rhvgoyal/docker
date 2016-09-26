@@ -95,7 +95,7 @@ func NewStoreFromGraphDriver(store MetadataStore, driver graphdriver.Driver) (St
 	}
 
 	for _, mount := range mounts {
-		if err := ls.loadMount(mount); err != nil {
+		if _, err := ls.loadMount(mount); err != nil {
 			logrus.Debugf("Failed to load mount %s: %s", mount, err)
 		}
 	}
@@ -157,30 +157,41 @@ func (ls *layerStore) loadLayer(layer ChainID) (*roLayer, error) {
 	return cl, nil
 }
 
-func (ls *layerStore) loadMount(mount string) error {
-	if _, ok := ls.mounts[mount]; ok {
-		return nil
+func (ls *layerStore) loadMount(mount string) (*mountedLayer, error) {
+	if ml, ok := ls.mounts[mount]; ok {
+		return ml, nil
 	}
 
 	mountID, err := ls.store.GetMountID(mount)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	initID, err := ls.store.GetInitID(mount)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	parent, err := ls.store.GetMountParent(mount)
 	if err != nil {
-		return err
+		return nil, err
+	}
+
+	shared, err := ls.store.GetMountShared(mount)
+	if err != nil {
+		return nil, err
+	}
+
+	initName, err := ls.store.GetInitName(mount)
+	if err != nil {
+		return nil, err
 	}
 
 	ml := &mountedLayer{
 		name:       mount,
 		mountID:    mountID,
 		initID:     initID,
+		shared:     shared,
 		layerStore: ls,
 		references: map[RWLayer]*referencedRWLayer{},
 	}
@@ -188,16 +199,26 @@ func (ls *layerStore) loadMount(mount string) error {
 	if parent != "" {
 		p, err := ls.loadLayer(parent)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		ml.parent = p
 
 		p.referenceCount++
 	}
 
+	if initName != "" {
+		initml, err := ls.loadMount(initName)
+		if err != nil {
+			ml.parent.referenceCount--
+			return nil, err
+		}
+
+		ml.initRWLayer = initml.getReference()
+	}
+
 	ls.mounts[ml.name] = ml
 
-	return nil
+	return ml, nil
 }
 
 func (ls *layerStore) applyTar(tx MetadataTransaction, ts io.Reader, parent string, layer *roLayer) error {
@@ -433,44 +454,32 @@ func (ls *layerStore) Release(l Layer) ([]Metadata, error) {
 	return ls.releaseLayer(layer)
 }
 
-func (ls *layerStore) createInitRWLayer(name string, parent ChainID, mountID string, mountLabel string, storageOpt map[string]string) (RWLayer, error) {
-	ls.mountL.Lock()
-	defer ls.mountL.Unlock()
+// This should be called with mounts lock held.
+func (ls *layerStore) createRWLayerLocked(name string, parent *roLayer, mountID string, mountLabel string, storageOpt map[string]string, initLayerID string, initRWLayer RWLayer, shared bool) (RWLayer, error) {
 	m, ok := ls.mounts[name]
 	if ok {
 		return nil, ErrMountNameConflict
 	}
 
-	var err error
-	var pid string
-	var p *roLayer
-
-	if string(parent) == "" {
-		return nil, fmt.Errorf("parent layer (%v) is not valid", parent)
-	}
-
-	p = ls.get(parent)
-	if p == nil {
-		return nil, ErrLayerDoesNotExist
-	}
-	pid = p.cacheID
-
-	// Release parent chain if error
-	defer func() {
-		if err != nil {
-			ls.releaseLayerLock(p)
-		}
-	}()
-
 	m = &mountedLayer{
-		name:       name,
-		parent:     p,
-		mountID:    mountID,
-		layerStore: ls,
-		references: map[RWLayer]*referencedRWLayer{},
+		name:        name,
+		parent:      parent,
+		mountID:     mountID,
+		layerStore:  ls,
+		references:  map[RWLayer]*referencedRWLayer{},
+		initID:      initLayerID,
+		initRWLayer: initRWLayer,
+		shared:      shared,
 	}
 
-	if err = ls.driver.CreateReadWrite(m.mountID, pid, mountLabel, storageOpt); err != nil {
+	var err error
+	if shared {
+		err = ls.driver.CreateShared(m.mountID, m.initID, mountLabel, storageOpt)
+	} else {
+		err = ls.driver.CreateReadWrite(m.mountID, parent.cacheID, mountLabel, storageOpt)
+	}
+
+	if err != nil {
 		return nil, err
 	}
 
@@ -481,33 +490,43 @@ func (ls *layerStore) createInitRWLayer(name string, parent ChainID, mountID str
 	return m.getReference(), nil
 }
 
-func (ls *layerStore) initMount(name string, parent ChainID, mountID, mountLabel string, initFunc MountInit, storageOpt map[string]string) (RWLayer, error) {
-	initRWLayer, err := ls.createInitRWLayer(name, parent, mountID, mountLabel, storageOpt)
-	if err != nil {
-		return nil, err
-	}
-
+func (ls *layerStore) initMount(initRWLayer RWLayer, initFunc MountInit, mountLabel string) error {
 	mountPath, err := initRWLayer.Mount(mountLabel)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	if err := initFunc(mountPath); err != nil {
 		initRWLayer.Unmount()
-		// TODO: Remove -init layer in case of failure.
-		return nil, err
+		return err
 	}
 
 	if err := initRWLayer.Unmount(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Should be called with mounts lock held.
+func (ls *layerStore) createRWInitLayerLocked(name string, parent *roLayer, mountID string, initFunc MountInit, mountLabel string, storageOpt map[string]string) (RWLayer, error) {
+	initRWLayer, err := ls.createRWLayerLocked(name, parent, mountID, mountLabel, storageOpt, "", nil, false)
+
+	if err != nil {
 		return nil, err
 	}
+
+	err = ls.initMount(initRWLayer, initFunc, mountLabel)
+	if err != nil && err != ErrMountNameConflict {
+		return nil, err
+	}
+
 	return initRWLayer, nil
 }
 
-func (ls *layerStore) CreateRWLayer(name string, parent ChainID, mountLabel string, initFunc MountInit, storageOpt map[string]string) (RWLayer, error) {
+func (ls *layerStore) CreateSharedLayer(name string, parent ChainID, mountLabel string, initFunc MountInit, storageOpt map[string]string) (RWLayer, error) {
 	ls.mountL.Lock()
-	m, ok := ls.mounts[name]
-	ls.mountL.Unlock()
+	defer ls.mountL.Unlock()
+	_, ok := ls.mounts[name]
 	if ok {
 		return nil, ErrMountNameConflict
 	}
@@ -521,10 +540,84 @@ func (ls *layerStore) CreateRWLayer(name string, parent ChainID, mountLabel stri
 		return nil, fmt.Errorf("parent layer (%v) is not valid", parent)
 	}
 
-	mountID := ls.mountID(name)
+	// This is reference for actual layer and not -init layer.
+	p = ls.get(parent)
+	if p == nil {
+		return nil, ErrLayerDoesNotExist
+	}
+
+	// Release parent chain when done.
+	defer func() {
+		if err != nil {
+			ls.releaseLayerLock(p)
+		}
+	}()
 
 	// First create init RWLayer
 	if initFunc != nil {
+		initMountName := fmt.Sprintf("%s-init", digest.Digest(string(parent)).Hex())
+		initMountID = fmt.Sprintf("%s-init", p.cacheID)
+		// This is shared mount. Some other container might have
+		// create -init layer laready. Try that first.
+		initRWLayer, err = ls.getRWLayerLocked(initMountName)
+		if err != nil && err != ErrMountDoesNotExist {
+			return nil, err
+		}
+
+		if initRWLayer == nil {
+			initp := ls.get(parent)
+			if initp == nil {
+				return nil, ErrLayerDoesNotExist
+			}
+
+			initRWLayer, err = ls.createRWInitLayerLocked(initMountName, initp, initMountID, initFunc, mountLabel, storageOpt)
+			if err != nil {
+				ls.releaseLayerLock(initp)
+				return nil, err
+			}
+
+			// Release init layer in case of error
+			defer func() {
+				if err != nil {
+					ls.releaseRWLayerLocked(initRWLayer)
+				}
+			}()
+		}
+	}
+
+	rwLayer, err := ls.createRWLayerLocked(name, p, ls.mountID(name), "", storageOpt, initMountID, initRWLayer, true)
+	if err != nil {
+		return nil, err
+	}
+
+	return rwLayer, nil
+}
+
+func (ls *layerStore) CreateRWLayer(name string, parent ChainID, mountLabel string, initFunc MountInit, storageOpt map[string]string) (RWLayer, error) {
+	ls.mountL.Lock()
+	defer ls.mountL.Unlock()
+	_, ok := ls.mounts[name]
+	if ok {
+		return nil, ErrMountNameConflict
+	}
+
+	var err error
+	var initMountID string
+	var initRWLayer RWLayer
+	var rwLayer RWLayer
+
+	if string(parent) == "" {
+		return nil, fmt.Errorf("parent layer (%v) is not valid", parent)
+	}
+
+	mountID := ls.mountID(name)
+	// First create init RWLayer
+	if initFunc != nil {
+		initp := ls.get(parent)
+		if initp == nil {
+			return nil, ErrLayerDoesNotExist
+		}
+
 		// Use "<id>-init" to maintain compatibility with graph drivers
 		// which are expecting this layer with this special name. If
 		// all graph drivers can be updated to not rely on knowing
@@ -532,67 +625,54 @@ func (ls *layerStore) CreateRWLayer(name string, parent ChainID, mountLabel stri
 		// generated.
 		initMountID = fmt.Sprintf("%s-init", mountID)
 		initMountName := fmt.Sprintf("%s-init", name)
-		initRWLayer, err = ls.initMount(initMountName, parent, initMountID, mountLabel, initFunc, storageOpt)
+
+		initRWLayer, err = ls.createRWInitLayerLocked(initMountName, initp, initMountID, initFunc, mountLabel, storageOpt)
 		if err != nil {
+			ls.releaseLayerLock(initp)
 			return nil, err
 		}
+
+		// Release init layer in case of error
+		defer func() {
+			if err != nil {
+				ls.releaseRWLayerLocked(initRWLayer)
+			}
+		}()
 	}
 
-	// -init Layer created. Take lock and check again that we did not
-	// race against another caller.
-	ls.mountL.Lock()
-	defer ls.mountL.Unlock()
-	m, ok = ls.mounts[name]
-	if ok {
-		// TODO: Remove -init layer
-		return nil, ErrMountNameConflict
-	}
-
-	p = ls.get(parent)
+	p := ls.get(parent)
 	if p == nil {
-		// TODO: Remove -init layer
 		return nil, ErrLayerDoesNotExist
 	}
 
 	// Release parent chain if error
 	defer func() {
 		if err != nil {
-			ls.layerL.Lock()
-			ls.releaseLayer(p)
-			ls.layerL.Unlock()
+			ls.releaseLayerLock(p)
 		}
 	}()
 
-	m = &mountedLayer{
-		name:        name,
-		parent:      p,
-		mountID:     mountID,
-		layerStore:  ls,
-		references:  map[RWLayer]*referencedRWLayer{},
-		initID:      initMountID,
-		initRWLayer: initRWLayer,
-	}
-
-	if err = ls.driver.CreateReadWrite(m.mountID, m.initID, "", storageOpt); err != nil {
+	rwLayer, err = ls.createRWLayerLocked(name, p, mountID, mountLabel, storageOpt, initMountID, initRWLayer, false)
+	if err != nil {
 		return nil, err
 	}
 
-	if err = ls.saveMount(m); err != nil {
-		return nil, err
-	}
-
-	return m.getReference(), nil
+	return rwLayer, nil
 }
 
-func (ls *layerStore) GetRWLayer(id string) (RWLayer, error) {
-	ls.mountL.Lock()
-	defer ls.mountL.Unlock()
+func (ls *layerStore) getRWLayerLocked(id string) (RWLayer, error) {
 	mount, ok := ls.mounts[id]
 	if !ok {
 		return nil, ErrMountDoesNotExist
 	}
 
 	return mount.getReference(), nil
+}
+
+func (ls *layerStore) GetRWLayer(id string) (RWLayer, error) {
+	ls.mountL.Lock()
+	defer ls.mountL.Unlock()
+	return ls.getRWLayerLocked(id)
 }
 
 func (ls *layerStore) GetMountID(id string) (string, error) {
@@ -621,10 +701,18 @@ func (ls *layerStore) releaseRWLayerLocked(l RWLayer) ([]Metadata, error) {
 		return []Metadata{}, nil
 	}
 
-	if err := ls.driver.Remove(m.mountID); err != nil {
-		logrus.Errorf("Error removing mounted layer %s: %s", m.name, err)
-		m.retakeReference(l)
-		return nil, err
+	if m.shared {
+		if err := ls.driver.RemoveShared(m.mountID); err != nil {
+			logrus.Errorf("Error removing shared mounted layer %s: %s", m.name, err)
+			m.retakeReference(l)
+			return nil, err
+		}
+	} else {
+		if err := ls.driver.Remove(m.mountID); err != nil {
+			logrus.Errorf("Error removing mounted layer %s: %s", m.name, err)
+			m.retakeReference(l)
+			return nil, err
+		}
 	}
 
 	if err := ls.store.RemoveMount(m.name); err != nil {
@@ -640,6 +728,12 @@ func (ls *layerStore) releaseRWLayerLocked(l RWLayer) ([]Metadata, error) {
 	}
 
 	return []Metadata{}, nil
+}
+
+func (ls *layerStore) releaseRWLayer(l RWLayer) ([]Metadata, error) {
+	ls.mountL.Lock()
+	defer ls.mountL.Unlock()
+	return ls.releaseRWLayerLocked(l)
 }
 
 func (ls *layerStore) ReleaseRWLayer(l RWLayer) ([]Metadata, error) {
@@ -676,10 +770,20 @@ func (ls *layerStore) saveMount(mount *mountedLayer) error {
 		if err := ls.store.SetInitID(mount.name, mount.initID); err != nil {
 			return err
 		}
+
+		if err := ls.store.SetInitName(mount.name, mount.initRWLayer.Name()); err != nil {
+			return err
+		}
 	}
 
 	if mount.parent != nil {
 		if err := ls.store.SetMountParent(mount.name, mount.parent.chainID); err != nil {
+			return err
+		}
+	}
+
+	if mount.shared {
+		if err := ls.store.SetMountShared(mount.name); err != nil {
 			return err
 		}
 	}
