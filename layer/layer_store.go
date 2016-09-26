@@ -444,20 +444,23 @@ func (ls *layerStore) CreateRWLayer(name string, parent ChainID, mountLabel stri
 	var err error
 	var pid string
 	var p *roLayer
-	if string(parent) != "" {
-		p = ls.get(parent)
-		if p == nil {
-			return nil, ErrLayerDoesNotExist
-		}
-		pid = p.cacheID
 
-		// Release parent chain if error
-		defer func() {
-			if err != nil {
-				ls.releaseLayerLock(p)
-			}
-		}()
+	if string(parent) == "" {
+		return nil, fmt.Errorf("parent layer (%v) is not valid", parent)
 	}
+
+	p = ls.get(parent)
+	if p == nil {
+		return nil, ErrLayerDoesNotExist
+	}
+	pid = p.cacheID
+
+	// Release parent chain if error
+	defer func() {
+		if err != nil {
+			ls.releaseLayerLock(p)
+		}
+	}()
 
 	m = &mountedLayer{
 		name:       name,
