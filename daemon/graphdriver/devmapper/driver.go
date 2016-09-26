@@ -128,7 +128,16 @@ func (d *Driver) CreateReadWrite(id, parent, mountLabel string, storageOpt map[s
 
 // Create adds a device with a given id and the parent.
 func (d *Driver) Create(id, parent, mountLabel string, storageOpt map[string]string) error {
-	if err := d.DeviceSet.AddDevice(id, parent, storageOpt); err != nil {
+	if err := d.DeviceSet.AddDevice(id, parent, storageOpt, false); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// CreateShared adds a device with a given id and the parent.
+func (d *Driver) CreateShared(id, parent, mountLabel string, storageOpt map[string]string) error {
+	if err := d.DeviceSet.AddDevice(id, parent, storageOpt, true); err != nil {
 		return err
 	}
 

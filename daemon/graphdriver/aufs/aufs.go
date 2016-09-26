@@ -198,6 +198,10 @@ func (a *Driver) Exists(id string) bool {
 	return true
 }
 
+func (a *Driver) CreateShared(id, parent, mountLabel string, storageOpt map[string]string) error {
+	return graphdriver.CreateSharedNotSupported("aufs")
+}
+
 // CreateReadWrite creates a layer that is writable for use as a container
 // file system.
 func (a *Driver) CreateReadWrite(id, parent, mountLabel string, storageOpt map[string]string) error {

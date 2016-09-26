@@ -201,6 +201,9 @@ func (d *Driver) GetMetadata(id string) (map[string]string, error) {
 func (d *Driver) Cleanup() error {
 	return mount.Unmount(d.home)
 }
+func (d *Driver) CreateShared(id, parent, mountLabel string, storageOpt map[string]string) error {
+	return graphdriver.CreateSharedNotSupported("overlay2")
+}
 
 // CreateReadWrite creates a layer that is writable for use as a container
 // file system.

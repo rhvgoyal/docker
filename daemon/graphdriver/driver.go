@@ -52,6 +52,8 @@ type ProtoDriver interface {
 	// Create creates a new, empty, filesystem layer with the
 	// specified id and parent and mountLabel. Parent and mountLabel may be "".
 	Create(id, parent, mountLabel string, storageOpt map[string]string) error
+	// Creates a new shared layer.
+	CreateShared(id, parent, mountLabel string, storageOpt map[string]string) error
 	// Remove attempts to remove the filesystem layer with this id.
 	Remove(id string) error
 	// Get returns the mountpoint for the layered filesystem referred
@@ -240,4 +242,8 @@ func scanPriorDrivers(root string) map[string]bool {
 		}
 	}
 	return driversMap
+}
+
+func CreateSharedNotSupported(graphdriver string) error {
+	return fmt.Errorf("CreateShared() is not supported by graphdriver %v", graphdriver)
 }

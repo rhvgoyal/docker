@@ -253,6 +253,10 @@ func (d *Driver) mountPath(id string) string {
 	return path.Join(d.options.mountPath, "graph", getMountpoint(id))
 }
 
+func (d *Driver) CreateShared(id, parent, mountLabel string, storageOpt map[string]string) error {
+	return graphdriver.CreateSharedNotSupported("zfs")
+}
+
 // CreateReadWrite creates a layer that is writable for use as a container
 // file system.
 func (d *Driver) CreateReadWrite(id, parent, mountLabel string, storageOpt map[string]string) error {

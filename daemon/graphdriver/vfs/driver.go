@@ -67,6 +67,9 @@ func (d *Driver) GetMetadata(id string) (map[string]string, error) {
 func (d *Driver) Cleanup() error {
 	return nil
 }
+func (d *Driver) CreateShared(id, parent, mountLabel string, storageOpt map[string]string) error {
+	return graphdriver.CreateSharedNotSupported("vfs")
+}
 
 // CreateReadWrite creates a layer that is writable for use as a container
 // file system.

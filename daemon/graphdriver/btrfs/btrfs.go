@@ -374,6 +374,10 @@ func (d *Driver) subvolumesDirID(id string) string {
 	return path.Join(d.subvolumesDir(), id)
 }
 
+func (a *Driver) CreateShared(id, parent, mountLabel string, storageOpt map[string]string) error {
+	return graphdriver.CreateSharedNotSupported("btrfs")
+}
+
 // CreateReadWrite creates a layer that is writable for use as a container
 // file system.
 func (d *Driver) CreateReadWrite(id, parent, mountLabel string, storageOpt map[string]string) error {
