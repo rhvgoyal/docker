@@ -471,14 +471,20 @@ func (ls *layerStore) CreateRWLayer(name string, parent ChainID, mountLabel stri
 	}
 
 	if initFunc != nil {
-		pid, err = ls.initMount(m.mountID, pid, mountLabel, initFunc, storageOpt)
+		// Use "<id>-init" to maintain compatibility with graph drivers
+		// which are expecting this layer with this special name. If
+		// all graph drivers can be updated to not rely on knowing
+		// about this layer then the initID should be randomly
+		// generated.
+		initID := fmt.Sprintf("%s-init", m.mountID)
+		err = ls.initMount(initID, pid, mountLabel, initFunc, storageOpt)
 		if err != nil {
 			return nil, err
 		}
-		m.initID = pid
+		m.initID = initID
 	}
 
-	if err = ls.driver.CreateReadWrite(m.mountID, pid, "", storageOpt); err != nil {
+	if err = ls.driver.CreateReadWrite(m.mountID, m.initID, "", storageOpt); err != nil {
 		return nil, err
 	}
 
@@ -579,31 +585,25 @@ func (ls *layerStore) saveMount(mount *mountedLayer) error {
 	return nil
 }
 
-func (ls *layerStore) initMount(graphID, parent, mountLabel string, initFunc MountInit, storageOpt map[string]string) (string, error) {
-	// Use "<graph-id>-init" to maintain compatibility with graph drivers
-	// which are expecting this layer with this special name. If all
-	// graph drivers can be updated to not rely on knowing about this layer
-	// then the initID should be randomly generated.
-	initID := fmt.Sprintf("%s-init", graphID)
-
+func (ls *layerStore) initMount(initID, parent, mountLabel string, initFunc MountInit, storageOpt map[string]string) error {
 	if err := ls.driver.CreateReadWrite(initID, parent, mountLabel, storageOpt); err != nil {
-		return "", err
+		return err
 	}
 	p, err := ls.driver.Get(initID, "")
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	if err := initFunc(p); err != nil {
 		ls.driver.Put(initID)
-		return "", err
+		return err
 	}
 
 	if err := ls.driver.Put(initID); err != nil {
-		return "", err
+		return err
 	}
 
-	return initID, nil
+	return nil
 }
 
 func (ls *layerStore) assembleTarTo(graphID string, metadata io.ReadCloser, size *int64, w io.Writer) error {
