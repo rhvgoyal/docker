@@ -123,6 +123,10 @@ func (d *Driver) Remove(id string) error {
 	return nil
 }
 
+func (a *Driver) GetShared(id, parentPath string) (string, error) {
+	return "", graphdriver.GetSharedNotSupported("vfs")
+}
+
 // Get returns the directory for the given id.
 func (d *Driver) Get(id, mountLabel string) (string, error) {
 	dir := d.dir(id)

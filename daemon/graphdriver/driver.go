@@ -63,6 +63,11 @@ type ProtoDriver interface {
 	// Put releases the system resources for the specified id,
 	// e.g, unmounting layered filesystem.
 	Put(id string) error
+	// GetShared() returns the mountpoint for the layered filesystem
+	// referred to by this id. This new layer is shares it contents
+	// with the parent layer whose id is passed in parent
+	// Returns the absolute path to the mounted layered filesystem.
+	GetShared(id, parent string) (string, error)
 	// Exists returns whether a filesystem layer with the specified
 	// ID exists on this driver.
 	Exists(id string) bool
@@ -246,4 +251,8 @@ func scanPriorDrivers(root string) map[string]bool {
 
 func CreateSharedNotSupported(graphdriver string) error {
 	return fmt.Errorf("CreateShared() is not supported by graphdriver %v", graphdriver)
+}
+
+func GetSharedNotSupported(graphdriver string) error {
+	return fmt.Errorf("GetShared() is not supported by graphdriver %v", graphdriver)
 }

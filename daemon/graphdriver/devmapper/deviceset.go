@@ -2328,8 +2328,12 @@ func (devices *DeviceSet) Shutdown(home string) error {
 	return nil
 }
 
+func (devices *DeviceSet) bindMountParent(path, parentPath string) error {
+	return syscall.Mount(parentPath, path, "", syscall.MS_BIND, "")
+}
+
 // MountDevice mounts the device if not already mounted.
-func (devices *DeviceSet) MountDevice(hash, path, mountLabel string) error {
+func (devices *DeviceSet) MountDevice(hash, path, parentMP, mountLabel string) error {
 	info, err := devices.lookupDeviceWithLock(hash)
 	if err != nil {
 		return err
@@ -2344,6 +2348,13 @@ func (devices *DeviceSet) MountDevice(hash, path, mountLabel string) error {
 
 	devices.Lock()
 	defer devices.Unlock()
+
+	// If parent path has been provided, this layer does not have
+	// device of its own. Instead it is sharing rootfs with parent.
+	// Just bind mount parent path.
+	if parentMP != "" {
+		return devices.bindMountParent(path, parentMP)
+	}
 
 	if err := devices.activateDeviceIfNeeded(info, false); err != nil {
 		return fmt.Errorf("devmapper: Error activating devmapper device for '%s': %s", hash, err)

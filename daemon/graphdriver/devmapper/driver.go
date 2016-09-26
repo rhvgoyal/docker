@@ -167,9 +167,25 @@ func (d *Driver) Remove(id string) error {
 }
 
 // Get mounts a device with given id into the root filesystem
+func (d *Driver) GetShared(id, parent string) (string, error) {
+	return d.get(id, parent, "")
+}
+
+// Get mounts a device with given id into the root filesystem
 func (d *Driver) Get(id, mountLabel string) (string, error) {
+	return d.get(id, "", mountLabel)
+}
+
+// Get mounts a device with given id into the root filesystem
+func (d *Driver) get(id, parent, mountLabel string) (string, error) {
 	mp := path.Join(d.home, "mnt", id)
 	rootFs := path.Join(mp, "rootfs")
+
+	var parentMP string
+	if parent != "" {
+		parentMP = path.Join(d.home, "mnt", parent)
+	}
+
 	if count := d.ctr.Increment(mp); count > 1 {
 		return rootFs, nil
 	}
@@ -191,7 +207,7 @@ func (d *Driver) Get(id, mountLabel string) (string, error) {
 	}
 
 	// Mount the device
-	if err := d.DeviceSet.MountDevice(id, mp, mountLabel); err != nil {
+	if err := d.DeviceSet.MountDevice(id, mp, parentMP, mountLabel); err != nil {
 		d.ctr.Decrement(mp)
 		return "", err
 	}

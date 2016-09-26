@@ -351,6 +351,10 @@ func (d *Driver) Remove(id string) error {
 	return err
 }
 
+func (a *Driver) GetShared(id, parentPath string) (string, error) {
+	return "", graphdriver.GetSharedNotSupported("zfs")
+}
+
 // Get returns the mountpoint for the given id after creating the target directories if necessary.
 func (d *Driver) Get(id, mountLabel string) (string, error) {
 	mountpoint := d.mountPath(id)

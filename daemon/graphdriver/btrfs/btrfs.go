@@ -494,6 +494,10 @@ func (d *Driver) Remove(id string) error {
 	return nil
 }
 
+func (a *Driver) GetShared(id, parentPath string) (string, error) {
+	return "", graphdriver.GetSharedNotSupported("btrfs")
+}
+
 // Get the requested filesystem id.
 func (d *Driver) Get(id, mountLabel string) (string, error) {
 	dir := d.subvolumesDirID(id)

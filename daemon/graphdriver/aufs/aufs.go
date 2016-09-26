@@ -307,6 +307,10 @@ func (a *Driver) Remove(id string) error {
 	return nil
 }
 
+func (a *Driver) GetShared(id, parentPath string) (string, error) {
+	return "", graphdriver.GetSharedNotSupported("aufs")
+}
+
 // Get returns the rootfs path for the id.
 // This will mount the dir at its given path
 func (a *Driver) Get(id, mountLabel string) (string, error) {
