@@ -513,6 +513,10 @@ func (d *Driver) Get(id, mountLabel string) (string, error) {
 	return dir, nil
 }
 
+func (a *Driver) PutShared(id string) error {
+	return graphdriver.PutSharedNotSupported("btrfs")
+}
+
 // Put is not implemented for BTRFS as there is no cleanup required for the id.
 func (d *Driver) Put(id string) error {
 	// Get() creates no runtime resources (like e.g. mounts)

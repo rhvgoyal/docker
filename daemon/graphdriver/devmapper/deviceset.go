@@ -2383,8 +2383,8 @@ func (devices *DeviceSet) MountDevice(hash, path, parentMP, mountLabel string) e
 }
 
 // UnmountDevice unmounts the device and removes it from hash.
-func (devices *DeviceSet) UnmountDevice(hash, mountPath string) error {
-	logrus.Debugf("devmapper: UnmountDevice(hash=%s)", hash)
+func (devices *DeviceSet) UnmountDevice(hash, mountPath string, shared bool) error {
+	logrus.Debugf("devmapper: UnmountDevice(hash=%s shared=%v)", hash, shared)
 	defer logrus.Debugf("devmapper: UnmountDevice(hash=%s) END", hash)
 
 	info, err := devices.lookupDeviceWithLock(hash)
@@ -2403,6 +2403,11 @@ func (devices *DeviceSet) UnmountDevice(hash, mountPath string) error {
 		return err
 	}
 	logrus.Debug("devmapper: Unmount done")
+
+	// Shared layer/device needs to just be unmounted
+	if shared {
+		return nil
+	}
 
 	if err := devices.deactivateDevice(info); err != nil {
 		return err

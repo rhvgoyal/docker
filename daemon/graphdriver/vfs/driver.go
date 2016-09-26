@@ -138,6 +138,10 @@ func (d *Driver) Get(id, mountLabel string) (string, error) {
 	return dir, nil
 }
 
+func (d *Driver) PutShared(id string) error {
+	return graphdriver.PutSharedNotSupported("vfs")
+}
+
 // Put is a noop for vfs that return nil for the error, since this driver has no runtime resources to clean up.
 func (d *Driver) Put(id string) error {
 	// The vfs driver has no runtime resources (e.g. mounts)

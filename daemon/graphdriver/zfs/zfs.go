@@ -393,6 +393,10 @@ func (d *Driver) Get(id, mountLabel string) (string, error) {
 	return mountpoint, nil
 }
 
+func (d *Driver) PutShared(id string) error {
+	return graphdriver.PutSharedNotSupported("zfs")
+}
+
 // Put removes the existing mountpoint for the given id if it exists.
 func (d *Driver) Put(id string) error {
 	mountpoint := d.mountPath(id)

@@ -347,6 +347,10 @@ func (a *Driver) Get(id, mountLabel string) (string, error) {
 	return m, nil
 }
 
+func (a *Driver) PutShared(id string) error {
+	return graphdriver.PutSharedNotSupported("aufs")
+}
+
 // Put unmounts and updates list of active mounts.
 func (a *Driver) Put(id string) error {
 	a.pathCacheLock.Lock()
