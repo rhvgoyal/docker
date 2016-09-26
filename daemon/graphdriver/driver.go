@@ -56,6 +56,8 @@ type ProtoDriver interface {
 	CreateShared(id, parent, mountLabel string, storageOpt map[string]string) error
 	// Remove attempts to remove the filesystem layer with this id.
 	Remove(id string) error
+	// RemoveShared attempts to remove the filesystem layer with this id.
+	RemoveShared(id string) error
 	// Get returns the mountpoint for the layered filesystem referred
 	// to by this id. You can optionally specify a mountLabel or "".
 	// Returns the absolute path to the mounted layered filesystem.
@@ -262,4 +264,8 @@ func GetSharedNotSupported(graphdriver string) error {
 
 func PutSharedNotSupported(graphdriver string) error {
 	return fmt.Errorf("PutShared() is not supported by graphdriver %v", graphdriver)
+}
+
+func RemoveSharedNotSupported(graphdriver string) error {
+	return fmt.Errorf("RemoveShared() is not supported by graphdriver %v", graphdriver)
 }

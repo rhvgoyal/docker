@@ -325,6 +325,10 @@ func (d *Driver) getLowerDirs(id string) ([]string, error) {
 	return lowersArray, nil
 }
 
+func (d *Driver) RemoveShared(id string) error {
+	return graphdriver.RemoveSharedNotSupported("overlay2")
+}
+
 // Remove cleans the directories that are created for this id.
 func (d *Driver) Remove(id string) error {
 	dir := d.dir(id)

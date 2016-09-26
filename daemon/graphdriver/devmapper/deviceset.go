@@ -677,7 +677,7 @@ func (devices *DeviceSet) cleanupDeletedDevices() error {
 
 	for _, info := range deletedDevices {
 		// This will again try deferred deletion.
-		if err := devices.DeleteDevice(info.Hash, false); err != nil {
+		if err := devices.DeleteDevice(info.Hash, false, false); err != nil {
 			logrus.Warnf("devmapper: Deletion of device %s, device_id=%v failed:%v", info.Hash, info.DeviceID, err)
 		}
 	}
@@ -1251,7 +1251,7 @@ func (devices *DeviceSet) setupBaseImage() error {
 		// If previous base device is in deferred delete state,
 		// that needs to be cleaned up first. So don't try
 		// deferred deletion.
-		if err := devices.DeleteDevice("", true); err != nil {
+		if err := devices.DeleteDevice("", true, false); err != nil {
 			return err
 		}
 	}
@@ -2098,12 +2098,19 @@ func (devices *DeviceSet) deleteDevice(info *devInfo, syncDelete bool) error {
 	return nil
 }
 
+func (devices *DeviceSet) deleteSharedDevice(info *devInfo) error {
+	if err := devices.unregisterDevice(info.Hash); err != nil {
+		return err
+	}
+	return nil
+}
+
 // DeleteDevice will return success if device has been marked for deferred
 // removal. If one wants to override that and want DeleteDevice() to fail if
 // device was busy and could not be deleted, set syncDelete=true.
-func (devices *DeviceSet) DeleteDevice(hash string, syncDelete bool) error {
-	logrus.Debugf("devmapper: DeleteDevice(hash=%v syncDelete=%v) START", hash, syncDelete)
-	defer logrus.Debugf("devmapper: DeleteDevice(hash=%v syncDelete=%v) END", hash, syncDelete)
+func (devices *DeviceSet) DeleteDevice(hash string, syncDelete bool, shared bool) error {
+	logrus.Debugf("devmapper: DeleteDevice(hash=%v syncDelete=%v shared=%v) START", hash, syncDelete, shared)
+	defer logrus.Debugf("devmapper: DeleteDevice(hash=%v syncDelete=%v, shared=%v) END", hash, syncDelete, shared)
 	info, err := devices.lookupDeviceWithLock(hash)
 	if err != nil {
 		return err
@@ -2114,6 +2121,10 @@ func (devices *DeviceSet) DeleteDevice(hash string, syncDelete bool) error {
 
 	devices.Lock()
 	defer devices.Unlock()
+
+	if shared {
+		return devices.deleteSharedDevice(info)
+	}
 
 	return devices.deleteDevice(info, syncDelete)
 }

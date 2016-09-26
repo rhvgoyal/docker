@@ -476,6 +476,10 @@ func (d *Driver) setStorageSize(dir string, driver *Driver) error {
 	return nil
 }
 
+func (d *Driver) RemoveShared(id string) error {
+	return graphdriver.RemoveSharedNotSupported("btrfs")
+}
+
 // Remove the filesystem with given id.
 func (d *Driver) Remove(id string) error {
 	dir := d.subvolumesDirID(id)

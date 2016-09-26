@@ -338,6 +338,10 @@ func setQuota(name string, quota string) error {
 	return fs.SetProperty("quota", quota)
 }
 
+func (d *Driver) RemoveShared(id string) error {
+	return graphdriver.RemoveSharedNotSupported("zfs")
+}
+
 // Remove deletes the dataset, filesystem and the cache for the given id.
 func (d *Driver) Remove(id string) error {
 	name := d.zfsPath(id)

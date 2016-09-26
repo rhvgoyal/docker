@@ -146,6 +146,16 @@ func (d *Driver) CreateShared(id, parent, mountLabel string, storageOpt map[stri
 
 // Remove removes a device with a given id, unmounts the filesystem.
 func (d *Driver) Remove(id string) error {
+	return d.remove(id, false)
+}
+
+// RemoveShared removes a device with a given id, unmounts the filesystem.
+func (d *Driver) RemoveShared(id string) error {
+	return d.remove(id, true)
+}
+
+// Remove removes a device with a given id, unmounts the filesystem.
+func (d *Driver) remove(id string, shared bool) error {
 	if !d.DeviceSet.HasDevice(id) {
 		// Consider removing a non-existing device a no-op
 		// This is useful to be able to progress on container removal
@@ -154,7 +164,7 @@ func (d *Driver) Remove(id string) error {
 	}
 
 	// This assumes the device has been properly Get/Put:ed and thus is unmounted
-	if err := d.DeviceSet.DeleteDevice(id, false); err != nil {
+	if err := d.DeviceSet.DeleteDevice(id, false, shared); err != nil {
 		return err
 	}
 

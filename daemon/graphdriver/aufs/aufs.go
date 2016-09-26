@@ -268,6 +268,10 @@ func (a *Driver) createDirsFor(id string) error {
 	return nil
 }
 
+func (a *Driver) RemoveShared(id string) error {
+	return graphdriver.RemoveSharedNotSupported("aufs")
+}
+
 // Remove will unmount and remove the given id.
 func (a *Driver) Remove(id string) error {
 	a.pathCacheLock.Lock()

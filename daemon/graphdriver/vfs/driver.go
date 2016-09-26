@@ -115,6 +115,10 @@ func (d *Driver) dir(id string) string {
 	return filepath.Join(d.home, "dir", filepath.Base(id))
 }
 
+func (d *Driver) RemoveShared(id string) error {
+	return graphdriver.RemoveSharedNotSupported("vfs")
+}
+
 // Remove deletes the content from the directory for a given id.
 func (d *Driver) Remove(id string) error {
 	if err := os.RemoveAll(d.dir(id)); err != nil && !os.IsNotExist(err) {
